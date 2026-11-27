@@ -38,7 +38,14 @@ jobs:
       - name: Create the app if it does not exist yet
         run: |
           APP=$(sed -n 's/^app = "\(.*\)"/\1/p' fly.toml)
-          if ! flyctl status --app "$APP" >/dev/null 2>&1; then
-            flyctl apps create "$APP" --org "$FLY_ORG"
+          if out=$(flyctl status --app "$APP" 2>&1); then
+            echo "App exists"
+          else
+            echo "flyctl status failed:"
+            echo "$out"
+            if ! flyctl apps create "$APP" --org "$FLY_ORG"; then
+              echo "::error::Could not find or create the Fly app $APP. Either create it once yourself (fly apps create $APP) and use a token that covers it, or use an organisation token (fly tokens create org) and set the repository variable FLY_ORG to that organisation's slug (fly orgs list). See README, Hosted copy."
+              exit 1
+            fi
           fi
       - run: flyctl deploy --remote-only --ha=false
