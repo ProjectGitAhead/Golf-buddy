@@ -1,0 +1,23 @@
+{
+  "name": "golf-buddy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Personal golf round tracker and World Handicap System index calculator.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "vitest run --dir src",
+    "typecheck": "tsc --noEmit",
+    "preview": "node scripts/build.mjs --serve",
+    "e2e": "node e2e/run.mjs",
+    "icons": "node scripts/site/icons.mjs"
+  },
+  "dependencies": {
+    "preact": "^11.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.2"
+  }
+}

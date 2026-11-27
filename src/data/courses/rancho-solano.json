@@ -1,0 +1,242 @@
+{
+  "id": "rancho-solano",
+  "name": "Rancho Solano Golf Course",
+  "city": "Fairfield",
+  "state": "CA",
+  "holes": [
+    {
+      "number": 1,
+      "par": 5,
+      "strokeIndex": 3,
+      "strokeIndexW": 3
+    },
+    {
+      "number": 2,
+      "par": 4,
+      "strokeIndex": 15,
+      "strokeIndexW": 7
+    },
+    {
+      "number": 3,
+      "par": 4,
+      "strokeIndex": 1,
+      "strokeIndexW": 11
+    },
+    {
+      "number": 4,
+      "par": 4,
+      "strokeIndex": 13,
+      "strokeIndexW": 9
+    },
+    {
+      "number": 5,
+      "par": 3,
+      "strokeIndex": 7,
+      "strokeIndexW": 15
+    },
+    {
+      "number": 6,
+      "par": 4,
+      "strokeIndex": 17,
+      "strokeIndexW": 13
+    },
+    {
+      "number": 7,
+      "par": 5,
+      "strokeIndex": 5,
+      "strokeIndexW": 1
+    },
+    {
+      "number": 8,
+      "par": 3,
+      "strokeIndex": 11,
+      "strokeIndexW": 17
+    },
+    {
+      "number": 9,
+      "par": 4,
+      "strokeIndex": 9,
+      "strokeIndexW": 5
+    },
+    {
+      "number": 10,
+      "par": 5,
+      "strokeIndex": 8,
+      "strokeIndexW": 8
+    },
+    {
+      "number": 11,
+      "par": 4,
+      "strokeIndex": 2,
+      "strokeIndexW": 6
+    },
+    {
+      "number": 12,
+      "par": 3,
+      "strokeIndex": 4,
+      "strokeIndexW": 14
+    },
+    {
+      "number": 13,
+      "par": 4,
+      "strokeIndex": 6,
+      "strokeIndexW": 12
+    },
+    {
+      "number": 14,
+      "par": 4,
+      "strokeIndex": 14,
+      "strokeIndexW": 2
+    },
+    {
+      "number": 15,
+      "par": 3,
+      "strokeIndex": 18,
+      "strokeIndexW": 18
+    },
+    {
+      "number": 16,
+      "par": 4,
+      "strokeIndex": 16,
+      "strokeIndexW": 16
+    },
+    {
+      "number": 17,
+      "par": 5,
+      "strokeIndex": 12,
+      "strokeIndexW": 10
+    },
+    {
+      "number": 18,
+      "par": 4,
+      "strokeIndex": 10,
+      "strokeIndexW": 4
+    }
+  ],
+  "tees": [
+    {
+      "id": "blue-m",
+      "name": "Blue",
+      "gender": "M",
+      "rating": 71.8,
+      "slope": 133,
+      "par": 72,
+      "yardages": [
+        497,
+        348,
+        385,
+        378,
+        186,
+        365,
+        471,
+        213,
+        417,
+        578,
+        427,
+        228,
+        404,
+        352,
+        152,
+        358,
+        521,
+        352
+      ]
+    },
+    {
+      "id": "white-m",
+      "name": "White",
+      "gender": "M",
+      "rating": 70,
+      "slope": 128,
+      "par": 72,
+      "yardages": [
+        475,
+        334,
+        364,
+        360,
+        162,
+        334,
+        454,
+        169,
+        386,
+        566,
+        375,
+        192,
+        364,
+        344,
+        140,
+        343,
+        492,
+        338
+      ]
+    },
+    {
+      "id": "gold-m",
+      "name": "Gold",
+      "gender": "M",
+      "rating": 67.8,
+      "slope": 120,
+      "par": 72,
+      "yardages": [
+        436,
+        319,
+        317,
+        331,
+        146,
+        311,
+        422,
+        128,
+        338,
+        536,
+        363,
+        156,
+        325,
+        336,
+        121,
+        329,
+        439,
+        325
+      ]
+    },
+    {
+      "id": "red-w",
+      "name": "Red",
+      "gender": "W",
+      "rating": 70.3,
+      "slope": 123,
+      "par": 72,
+      "yardages": [
+        413,
+        301,
+        273,
+        321,
+        130,
+        289,
+        414,
+        110,
+        293,
+        485,
+        323,
+        146,
+        305,
+        328,
+        107,
+        285,
+        410,
+        281
+      ]
+    }
+  ],
+  "sources": [
+    "https://www.golfpass.com/courses/40-rancho-solano-golf-course/scorecard-and-layout",
+    "https://www.golfpass.com/travel-advisor/courses/40-rancho-solano-golf-course",
+    "https://course.bluegolf.com/bluegolf/course/course/ranchosolanogc1/detailedscorecard.htm",
+    "https://www.teeoff.com/courses/1039686-rancho-solano-golf-course-details",
+    "https://18birdies.com/golf-courses/club/899a5f90-86ac-11e4-8c28-020000005b00/rancho-solano-golf-course",
+    "https://ncga.bluegolf.com/bluegolf/ncga24/event/ncga24341/index.htm",
+    "https://www.greenskeeper.org/northern_california/san_francisco_and_north_bay_area/Rancho_Solano_Golf_Course/scorecard.cfm",
+    "https://www.golflink.com/golf-courses/ca/fairfield/rancho-solano-golf-course"
+  ],
+  "verified": false,
+  "updatedAt": "2026-11-27T00:00:00.000Z"
+}
