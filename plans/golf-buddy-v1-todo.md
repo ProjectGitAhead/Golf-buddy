@@ -18,7 +18,7 @@ Limits: spend none. Review: the live artifact on his phone, plus the draft PR.
 - Review folder: `/tmp/claude-0/-home-user/24fc6364-1d94-5479-9217-f29e60caeeeb/scratchpad/review/<task>/`.
 - Gate per task: `npm run typecheck`, `npm test`, `npm run build`, `npm run e2e` (once it exists), fragment
   checks (no doctype / external URLs, size), one phone-width screenshot of changed screens.
-- Status (2026-11-27): every card T1.1-T5.2 built and gated (166 unit tests, 9 e2e specs). Artifact live at version 6. Waiting on the owner: turn Pages on (Settings > Pages > Source: GitHub Actions) and merge PR #1. Unverified on a real phone: db sync, photo reading, camera EXIF, GPS. Review findings not fixed (low, and M4 unconfirmed): see scratchpad review/checkpoint3-code-review.txt; tombstones are never pruned.
+- Status (2026-11-27): every card T1.1-T5.2 built and gated (166 unit tests, 9 e2e specs). Artifact live at version 6. Hosted copy now deploys to Fly.io from GitHub Actions (T5.3; nginx image and the deploy itself not run anywhere yet). Waiting on the owner: add the FLY_API_TOKEN repo secret and merge PR #1. Unverified on a real phone: db sync, photo reading, camera EXIF, GPS. Review findings not fixed (low, and M4 unconfirmed): see scratchpad review/checkpoint3-code-review.txt; tombstones are never pruned.
 
 ## Phase 1: foundations (T1.1 and T1.2 in parallel)
 
@@ -155,9 +155,9 @@ workflow.
 **Description:** Plan section 14: `fly.toml`, `Dockerfile`, `deploy/nginx.conf`, `.dockerignore`,
 `.github/workflows/fly.yml`; switch `pages.yml` to manual dispatch only; README "Hosted copy" section updated.
 **Acceptance:**
-- [ ] `fly.toml` parses as TOML and `fly.yml` / `pages.yml` parse as YAML; contents match plan section 14
-- [ ] `nginx.conf` is syntax-checked (`nginx -t` in a container if docker is available, otherwise stated as not checked) and serves `dist/site` on 8080 with the headers listed
-- [ ] The existing gate still passes (typecheck, tests, build, 9 e2e specs)
-- [ ] README states the owner's three steps and the site URL
-**Verification:** [ ] parsers · [ ] gate
+- [x] `fly.toml` parses as TOML and `fly.yml` / `pages.yml` parse as YAML; contents match plan section 14
+- [x] `nginx.conf` is syntax-checked (`nginx -t` in a container if docker is available, otherwise stated as not checked) and serves `dist/site` on 8080 with the headers listed
+- [x] The existing gate still passes (typecheck, tests, build, 9 e2e specs)
+- [x] README states the owner's three steps and the site URL
+**Verification:** [x] parsers · [x] gate
 **Dependencies:** T5.2 · **Files:** fly.toml, Dockerfile, .dockerignore, deploy/nginx.conf, .github/workflows/fly.yml, .github/workflows/pages.yml, README.md · **Size:** S · **Risk:** none · **Screens:** none
