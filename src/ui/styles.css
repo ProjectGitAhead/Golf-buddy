@@ -206,3 +206,47 @@ button:disabled{cursor:default;opacity:.45}
 .facts .received{flex-direction:row}
 .sc .score td:first-child{font-size:11.5px}
 .cta{position:sticky;bottom:0;padding-block:10px;background:var(--bg);z-index:1}
+
+/* T2.2 handicap + stats */
+.idx-card{padding:16px 16px 14px}
+.idx-top{display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.idx-label{font-size:13px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+.idx-low{text-align:right;padding:8px 12px;border-radius:12px;background:var(--surface-2)}
+.idx-low small{display:block;font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.idx-low b{display:block;font-size:24px;font-weight:800;line-height:1.1}
+.idx-note{margin:10px 0 0;font-size:15px;font-weight:600}
+.idx-cap{color:var(--accent)}
+.idx-unofficial{margin:12px 0 0;padding-top:10px;border-top:1px dashed var(--line);font-size:13px;color:var(--muted)}
+.spark{margin:14px 0 0;color:var(--turf)}
+.spark-plot{position:relative;height:64px}
+.spark svg{display:block;width:100%;height:64px;overflow:visible}
+.spark-dot{position:absolute;width:12px;height:12px;margin:-6px 0 0 -6px;border-radius:50%;background:var(--accent);
+  box-shadow:0 0 0 3px var(--surface)}
+.spark figcaption{display:flex;justify-content:space-between;gap:8px;font-size:12.5px;font-weight:700;color:var(--muted);margin-top:6px}
+.list-intro{margin:0 0 10px;color:var(--muted);font-size:14px}
+.counts-chip{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:1px 7px;
+  border-radius:999px;background:var(--turf);color:var(--turf-ink);vertical-align:1px}
+.score-row{color:inherit;font:inherit;padding-left:12px}
+.score-row .end{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.count-mark{flex:none;align-self:stretch;width:4px;border-radius:2px;background:transparent}
+.count-mark.on{background:var(--turf)}
+.badge-count{background:var(--turf);color:var(--turf-ink)}
+.list-split{padding:10px 16px;font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
+  background:var(--surface-2)}
+.detail-status{font-size:20px !important;line-height:1.25 !important;margin-top:2px}
+.hint{margin:0;font-size:14px;color:var(--muted)}
+.note .btn-text{display:block;min-height:44px;padding:0;margin-top:4px}
+.how{margin-top:22px;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
+.how summary{min-height:54px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-weight:800;
+  font-size:16px;cursor:pointer;list-style:none}
+.how summary::-webkit-details-marker{display:none}
+.how summary::after{content:"+";font-size:24px;font-weight:600;color:var(--muted)}
+.how[open] summary::after{content:"−"}
+.how-body{padding:0 16px 6px;font-size:15px;line-height:1.5}
+.how-body p{margin:0 0 12px}
+.par-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.par-cell{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px;display:flex;flex-direction:column}
+.par-cell small{font-size:11.5px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.par-cell b{font-size:28px;font-weight:800;line-height:1.15;letter-spacing:-.02em}
+.par-cell span{font-size:13px;color:var(--muted)}
+.stat-line{display:flex;gap:12px;flex-wrap:wrap}

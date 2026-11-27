@@ -36,7 +36,7 @@ export function App() {
       </header>
       <main class="main" id="main">
         {tab === 'play' && <Play startCourseId={startCourseId} onStarted={() => setStartCourseId(null)} />}
-        {tab === 'handicap' && <Handicap />}
+        {tab === 'handicap' && <Handicap onEditRound={() => go('play')} />}
         {tab === 'shots' && <Shots />}
         {tab === 'courses' && <Courses onPlay={playCourse} />}
       </main>

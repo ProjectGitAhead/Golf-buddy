@@ -1,9 +1,9 @@
-// Shots tab. T2.1 shows the index and each posted round's putts and fairways; T2.2 adds the round stats
-// (fairways, greens in regulation, putts, scoring by par) and T3.1 the approach heat map above them.
+// Shots tab: the round stats (fairways, greens in regulation, putts, scoring by par) from posted rounds; T3.1 adds
+// the approach heat map above them.
 import { computeHistory } from '../../core/handicap';
 import { useStore } from '../../store/use-store';
 import { formatIndex, postedRounds } from '../round';
-import { PostedRounds } from './handicap';
+import { RoundStats } from './shots-stats';
 
 export function Shots() {
   const store = useStore();
@@ -16,8 +16,8 @@ export function Shots() {
       <p class="lede">
         {hist.indexSource === 'none' ? 'No index yet' : `Index ${formatIndex(hist.displayIndex)}`} · {count} posted round{count === 1 ? '' : 's'}
       </p>
-      <PostedRounds detail="stats" />
-      {count === 0 && <p class="empty">Putts and fairways from your posted rounds appear here.</p>}
+      <RoundStats />
+      {count === 0 && <p class="empty">Fairways, greens and putts from your posted rounds appear here.</p>}
     </div>
   );
 }
