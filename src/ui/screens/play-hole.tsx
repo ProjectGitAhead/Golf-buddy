@@ -4,6 +4,7 @@ import type { ApproachMark, FairwayResult, HoleScore, Round } from '../../core/t
 import { findCourse } from '../../data/courses';
 import { useStore } from '../../store/use-store';
 import { Icon } from '../components/common';
+import { ApproachControl } from '../components/green-sheet';
 import { formatToPar, holeFacts, scoreMark, scoreName, totals, type HoleFacts } from '../round';
 
 export function HoleEntry({ round, onFinish }: { round: Round; onFinish: () => void }) {
@@ -97,12 +98,10 @@ export function HoleEntry({ round, onFinish }: { round: Round; onFinish: () => v
   );
 }
 
-/**
- * T3.1 slot: the "Mark approach" button and the green sheet (plan section 8) render here and save through
- * `onSave`. Until then it renders nothing, so the hole screen shows no control that does nothing.
- */
-function MarkApproachSlot(_props: { round: Round; hole: number; onSave: (mark: ApproachMark) => void }) {
-  return null;
+/** The "Mark approach" control and its green sheet (plan section 8); saves or removes through `onSave`. */
+function MarkApproachSlot({ round, hole, onSave }: { round: Round; hole: number; onSave: (mark: ApproachMark | undefined) => void }) {
+  const mark = round.scores.find((s) => s.hole === hole)?.approach;
+  return <ApproachControl hole={hole} mark={mark} onSave={onSave} />;
 }
 
 function HoleHeader({ f, hasIndex, si }: { f: HoleFacts; hasIndex: boolean; si: number }) {

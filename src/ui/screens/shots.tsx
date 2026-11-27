@@ -2,6 +2,7 @@
 // (fairways, greens in regulation, putts, scoring by par) and T3.1 the approach heat map above them.
 import { computeHistory } from '../../core/handicap';
 import { useStore } from '../../store/use-store';
+import { ApproachHeatmap } from '../components/heatmap';
 import { formatIndex, postedRounds } from '../round';
 import { PostedRounds } from './handicap';
 
@@ -16,6 +17,7 @@ export function Shots() {
       <p class="lede">
         {hist.indexSource === 'none' ? 'No index yet' : `Index ${formatIndex(hist.displayIndex)}`} · {count} posted round{count === 1 ? '' : 's'}
       </p>
+      <ApproachHeatmap />
       <PostedRounds detail="stats" />
       {count === 0 && <p class="empty">Putts and fairways from your posted rounds appear here.</p>}
     </div>
