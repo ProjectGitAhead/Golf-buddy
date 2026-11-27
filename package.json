@@ -6,9 +6,10 @@
   "description": "Personal golf round tracker and World Handicap System index calculator.",
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "vitest run",
+    "test": "vitest run --dir src",
     "typecheck": "tsc --noEmit",
-    "preview": "node scripts/build.mjs --serve"
+    "preview": "node scripts/build.mjs --serve",
+    "e2e": "node e2e/run.mjs"
   },
   "dependencies": {
     "preact": "^11.2.0"
