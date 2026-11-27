@@ -28,11 +28,11 @@ emits `dist/golf-buddy.html` (fragment) and `dist/preview.html`, a placeholder `
 app name, `src/core/types.ts` exactly as plan section 4, and `src/core/handicap.ts` implementing every rule in
 plan section 5 with vitest tests.
 **Acceptance:**
-- [ ] `npm run typecheck`, `npm test`, `npm run build` all exit 0
-- [ ] `dist/golf-buddy.html` starts with `<title>Golf Buddy</title>`, has no doctype/html/head/body tags and no `http(s)://` URL
-- [ ] Tests cover: course handicap (18 and 9, plus handicap), stroke allocation (CH 0, 9, 18, 27, 40, -2; 9-hole re-rank), net double bogey and the par+5 rule, 18-hole differential, 9-hole differential with expected score, every row of the index table, rounding of negatives, exceptional score -1 and -2, soft cap, hard cap, max 54.0, imported differentials, `targetScore`
-- [ ] At least one test replays a 20+ round history end to end through `computeHistory`
-**Verification:** [ ] `npm test` · [ ] `npm run typecheck` · [ ] `npm run build`
+- [x] `npm run typecheck`, `npm test`, `npm run build` all exit 0
+- [x] `dist/golf-buddy.html` starts with `<title>Golf Buddy</title>`, has no doctype/html/head/body tags and no `http(s)://` URL
+- [x] Tests cover: course handicap (18 and 9, plus handicap), stroke allocation (CH 0, 9, 18, 27, 40, -2; 9-hole re-rank), net double bogey and the par+5 rule, 18-hole differential, 9-hole differential with expected score, every row of the index table, rounding of negatives, exceptional score -1 and -2, soft cap, hard cap, max 54.0, imported differentials, `targetScore`
+- [x] At least one test replays a 20+ round history end to end through `computeHistory`
+**Verification:** [x] `npm test` · [x] `npm run typecheck` · [x] `npm run build`
 **Dependencies:** none · **Files:** package.json, package-lock.json, tsconfig.json, .gitignore, scripts/build.mjs, src/core/types.ts, src/core/handicap.ts, src/core/handicap.test.ts, src/ui/app.tsx, src/main.tsx, dist/ · **Size:** M
 **Risk:** none (the maths is checked by the overseer with independent worked examples) · **Screens:** none
 
@@ -41,15 +41,15 @@ plan section 5 with vitest tests.
 `src/data/courses/rancho-solano.json` to the `Course` type in plan section 4, following plan section 10. Use web
 search; prefer the USGA course rating database (ncrdb.usga.org) and the course's own scorecard.
 **Acceptance:**
-- [ ] Valid JSON matching `Course`: 18 holes, every tee has 18 yardages, pars sum to each tee's par, stroke indexes are a permutation of 1-18
-- [ ] Every tee the course lists is present with rating and slope; `sources` lists the URLs used
-- [ ] `verified` set by the rule in plan section 10; the report states plainly which values are confirmed by two sources and which are not
-**Verification:** [ ] a node one-liner in the report that checks the sums and the permutation
+- [x] Valid JSON matching `Course`: 18 holes, every tee has 18 yardages, pars sum to each tee's par, stroke indexes are a permutation of 1-18
+- [x] Every tee the course lists is present with rating and slope; `sources` lists the URLs used
+- [x] `verified` set by the rule in plan section 10; the report states plainly which values are confirmed by two sources and which are not
+**Verification:** [x] a node one-liner in the report that checks the sums and the permutation
 **Dependencies:** none · **Files:** src/data/courses/rancho-solano.json · **Size:** S
 **Risk:** none · **Screens:** none
 
 ## Checkpoint 1
-- [ ] Gate green for T1.1 and T1.2 · [ ] overseer's own worked WHS examples agree with the engine · [ ] pushed
+- [x] Gate green for T1.1 and T1.2 · [x] overseer's own worked WHS examples agree with the engine · [x] pushed
 
 ## Phase 2: the app
 
