@@ -304,3 +304,28 @@ coordinates for Rancho Solano; hazards and layups; slope adjustment.
   share data. The Handicap screen's storage note says where the data lives in each case, truthfully.
 - The owner turns Pages on once (repo Settings > Pages > Source: GitHub Actions) and merges the PR; the site is
   public at `https://projectgitahead.github.io/Golf-buddy/`. No personal data is in the build.
+
+## 14. Hosted copy on Fly.io (owner, 2026-11-27: "You can use my fly.io account to host it")
+
+This session has no Fly CLI, no Fly token and no network route to Fly, and secrets never pass through chat. So
+the deploy runs in GitHub Actions with a token the owner stores as the repo secret `FLY_API_TOKEN`. Fly becomes
+the hosted copy; the GitHub Pages workflow stays in the repo but runs only when started by hand
+(`workflow_dispatch`), so pushes to `main` do not fail while Pages is switched off.
+
+- `fly.toml` at the repo root: `app = "projectgitahead-golf-buddy"`, `primary_region = "sjc"`, `[build]`
+  dockerfile, `[http_service]` `internal_port = 8080`, `force_https = true`, `auto_stop_machines = "stop"`,
+  `auto_start_machines = true`, `min_machines_running = 0`; one `shared-cpu-1x` machine with 256 MB.
+- `Dockerfile`: `nginx:alpine` serving `dist/site/` on 8080 from a small `deploy/nginx.conf`: `index.html`,
+  `sw.js` and `manifest.webmanifest` with `Cache-Control: no-cache`; icons cacheable for a day; gzip on;
+  `X-Content-Type-Options: nosniff`; a `Permissions-Policy` that allows `geolocation=(self)` and `camera=(self)`;
+  unknown paths return 404. `.dockerignore` keeps everything except `dist/site` and `deploy/` out of the image.
+- `.github/workflows/fly.yml`: on push to `main` and manual dispatch: checkout, node 22, `npm ci`, typecheck,
+  test, build, `superfly/flyctl-actions/setup-flyctl`, then `flyctl apps create <app> --org "$FLY_ORG"` only if
+  `flyctl status` says the app does not exist (`FLY_ORG` from the repo variable of that name, default
+  `personal`), then `flyctl deploy --remote-only --ha=false`. `FLY_API_TOKEN` from secrets. If the secret is
+  empty the job stops at its first step with a plain message instead of a confusing failure. Concurrency group
+  `fly-deploy`.
+- The site is at `https://projectgitahead-golf-buddy.fly.dev/`; it is public and holds no personal data. Cost:
+  one machine that stops when idle.
+- Owner's steps: create a Fly deploy token (`fly tokens create org` or the Fly dashboard > Tokens), add it at
+  GitHub repo Settings > Secrets and variables > Actions as `FLY_API_TOKEN`, merge the PR.

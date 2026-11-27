@@ -150,3 +150,14 @@ workflow.
 **Verification:** [x] `npm run e2e` (spec: site) · [x] typecheck · [x] `npm test` · [x] build
 **Dependencies:** T5.1 merged · **Files:** scripts/build.mjs, scripts/site/** (wrapper, sw template, icon svg), .github/workflows/pages.yml, e2e/site.spec.mjs, e2e runner (sub-path serving only), src/ui/screens/handicap.tsx (the storage note only), README.md (a "Hosted copy" section), dist/ · **Size:** M
 **Risk:** none (public site: confirm no personal data in the build) · **Screens:** none
+
+### T5.3 Deploy the hosted copy to Fly.io from GitHub Actions (light)
+**Description:** Plan section 14: `fly.toml`, `Dockerfile`, `deploy/nginx.conf`, `.dockerignore`,
+`.github/workflows/fly.yml`; switch `pages.yml` to manual dispatch only; README "Hosted copy" section updated.
+**Acceptance:**
+- [ ] `fly.toml` parses as TOML and `fly.yml` / `pages.yml` parse as YAML; contents match plan section 14
+- [ ] `nginx.conf` is syntax-checked (`nginx -t` in a container if docker is available, otherwise stated as not checked) and serves `dist/site` on 8080 with the headers listed
+- [ ] The existing gate still passes (typecheck, tests, build, 9 e2e specs)
+- [ ] README states the owner's three steps and the site URL
+**Verification:** [ ] parsers · [ ] gate
+**Dependencies:** T5.2 · **Files:** fly.toml, Dockerfile, .dockerignore, deploy/nginx.conf, .github/workflows/fly.yml, .github/workflows/pages.yml, README.md · **Size:** S · **Risk:** none · **Screens:** none
