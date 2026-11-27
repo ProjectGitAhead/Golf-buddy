@@ -82,6 +82,7 @@ export function validateCourseForm(f: CourseForm, original?: Course): { errors: 
     const h: Hole = { number: i + 1, par: num(p), strokeIndex: si[i] };
     if (siW) h.strokeIndexW = siW[i];
     else if (prev?.strokeIndexW !== undefined) h.strokeIndexW = prev.strokeIndexW;
+    if (prev?.green) h.green = prev.green;                // T5.1: a learned green survives editing the numbers
     return h;
   });
   const par = holes.reduce((a, h) => a + h.par, 0);
