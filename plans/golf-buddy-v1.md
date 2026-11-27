@@ -240,3 +240,45 @@ request for a personal tool.
   `Co-Authored-By: Claude <noreply@anthropic.com>` and a blank line before it. No model names anywhere in the repo.
 - Every user-facing line is final copy and true to the code. No lorem ipsum, no "coming soon".
 - Report in at most 15 lines; the full account goes to the report file named in your brief.
+
+## 12. Distance finder (added 2026-11-27 at the owner's request)
+
+Owner: "track distance from myself and the hole ... basically have a distance finder."
+
+Constraint: inside the Claude artifact frame `navigator.geolocation` is refused without a prompt, and no location
+capability exists. So the feature has two methods behind one "Distance" button on the hole screen, and the copy
+never promises GPS where it cannot work.
+
+### 12.1 Flagstick rangefinder (works everywhere, including the artifact)
+- Take or choose a photo of the flag (`<input type="file" accept="image/*" capture="environment">`). The photo is
+  NOT downscaled for measuring: decode it at full resolution (`createImageBitmap`), show it in a pannable,
+  pinch-zoomable canvas with a magnifier loupe above the finger while dragging.
+- Two handles: top of the flagstick and its base at the cup. Distance = `flagHeightFt x focalPx / heightPx`,
+  where `focalPx = f35 x diagonalPx / 43.27` (35 mm-equivalent focal length, full-frame diagonal 43.27 mm), using
+  the pixel dimensions of the original image. Result in yards (whole numbers), with a plus/minus computed from a
+  2 px placement error at the current handle spacing.
+- `f35` comes from the photo's EXIF (`FocalLengthIn35mmFilm` 0xA405, times `DigitalZoomRatio` 0xA404 when
+  present; handle orientation). A small EXIF reader lives in `src/core/exif.ts` (JPEG APP1 only, no library).
+  When EXIF is missing, he picks the lens (0.5x = 13 mm, 1x = 26 mm, 2x = 52 mm, 3x = 77 mm, 5x = 120 mm) and the
+  result is labelled "approximate: lens guessed".
+- Flagstick height is a setting on the sheet, default 7 ft, remembered in the profile (`flagHeightFt`).
+- Pure maths in `src/core/rangefinder.ts`, unit-tested with worked examples (a 7 ft stick 42 px tall in a
+  4032 x 3024 photo at 26 mm is 168 yd; check both orientations).
+- The photo is never stored or sent anywhere. Copy states the honest accuracy: best inside about 200 yards and
+  with the 2x or 3x lens.
+
+### 12.2 GPS (active only where the browser grants location)
+- On opening the sheet, never call geolocation by itself; a "Use my location" button does (one call from the tap).
+  If it is refused or unavailable, show one line: "This page cannot use your phone's location here. The flagstick
+  rangefinder works everywhere." and hide the GPS section for the visit.
+- Green positions are learned: `Hole.green?: { lat: number; lon: number }` (optional field added to
+  `src/core/types.ts`), saved on the user's copy of the course when he taps "I'm at the pin: save this green".
+  With a saved green: live distance in yards to it (`watchPosition`, high accuracy, stopped when the sheet
+  closes), with the reported accuracy shown as plus/minus yards.
+- Shot measure: "Mark my ball here", walk to the ball, the sheet shows the distance walked; works with no saved
+  green.
+- Haversine in `src/core/geo.ts`, unit-tested.
+
+### 12.3 Out of scope here
+Hosting the app outside Claude (needed for GPS to be usable) is a separate decision for the owner; bundled green
+coordinates for Rancho Solano; hazards and layups; slope adjustment.

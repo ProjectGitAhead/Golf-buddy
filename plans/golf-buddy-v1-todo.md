@@ -123,3 +123,18 @@ rules live, the known approximations. Under 60 lines.
 - [ ] Commands in the README run as written
 **Verification:** [ ] run each command once
 **Dependencies:** T3.x · **Files:** README.md · **Size:** S · **Risk:** none · **Screens:** none
+
+## Phase 5: distance finder (added at the owner's request)
+
+### T5.1 Distance finder: flagstick rangefinder and GPS
+**Description:** Plan section 12: a "Distance" button on the hole screen opening a sheet with the flagstick
+rangefinder (12.1) and, where location is granted, GPS distance to a learned green and shot measuring (12.2).
+**Acceptance:**
+- [ ] Rangefinder: with a test JPEG carrying EXIF (generated in the e2e), placing the handles gives the expected yards within 1 yd; without EXIF the lens picker appears and the result is labelled approximate
+- [ ] Handles can be placed precisely on a phone: pinch or button zoom, pan, and a loupe while dragging (e2e drags; overseer looks at the screenshots)
+- [ ] `rangefinder.ts`, `exif.ts`, `geo.ts` unit-tested (worked examples, both orientations, digital zoom, big- and little-endian EXIF, missing tags)
+- [ ] GPS: with geolocation mocked (Playwright permission + position), saving a green then moving shows the right yards; shot measure shows the walked distance; with geolocation refused, the one-line explanation shows and nothing loops
+- [ ] Nothing calls geolocation or opens the camera before a tap; the photo is not stored; fragment rules still hold
+**Verification:** [ ] `npm test` (rangefinder, exif, geo) · [ ] `npm run e2e` (spec: distance) · [ ] typecheck · [ ] build
+**Dependencies:** T2.1 · **Files:** src/core/rangefinder.ts, src/core/exif.ts, src/core/geo.ts (+ tests), src/core/types.ts (two optional fields only), src/ui/components/distance-sheet.tsx, src/ui/screens/play-hole.tsx (the button and sheet hook only), src/ui/styles.css (one block at the end), e2e/distance.spec.mjs · **Size:** M
+**Risk:** none · **Screens:** distance-rangefinder, distance-gps
