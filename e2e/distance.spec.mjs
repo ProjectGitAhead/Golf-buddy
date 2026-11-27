@@ -17,6 +17,9 @@ function spies() {
   window.__geo = { get: 0, watch: 0, clear: 0 };
   window.__picker = 0;
   window.__closed = 0;
+  // Inside Claude (as published): `window.claude` exists, so the flag photo is the first tab. The hosted copy, with
+  // GPS first, is covered by site.spec.mjs.
+  window.claude = { use: async () => null };
   const g = navigator.geolocation;
   if (g) {
     const { getCurrentPosition, watchPosition, clearWatch } = g;

@@ -11,16 +11,30 @@ stays in the viewer's own account storage; there is no server of ours.
 npm install          # once
 npm run typecheck    # tsc --noEmit
 npm test             # vitest unit tests (src/)
-npm run build        # writes dist/golf-buddy.html (fragment) and dist/preview.html
+npm run build        # writes dist/golf-buddy.html (fragment), dist/preview.html and dist/site/ (hosted copy)
 npm run preview      # builds and serves a local preview page
 npm run e2e          # builds, serves dist/ on port 4610 (E2E_PORT to change), runs every e2e/*.spec.mjs
+npm run icons        # redraws the hosted copy's PNG icons from scripts/site/icon.svg (needs Playwright)
 ```
 
 ## How it is published
 
 The overseer publishes `dist/golf-buddy.html` as a private Claude Artifact with the capabilities `db`, `user` and
-`sample-with-images`. Nobody else publishes it, and nothing here pushes or deploys. `dist/` is committed, so rebuild
-and commit it with any UI change.
+`sample-with-images`. Nobody else publishes it. `dist/` is committed, so rebuild and commit it with any UI change.
+
+## Hosted copy
+
+The same app also runs as a web page at `https://projectgitahead.github.io/Golf-buddy/`, because a page inside
+Claude cannot use the phone's location. There, GPS distances work and the Distance sheet opens on GPS; the flag
+photo rangefinder works too, but reading a green or a scorecard from a photo needs Claude and is not available. Add it to the home screen from the browser's share menu;
+a small service worker (`scripts/site/sw.js`) lets it open with poor or no signal and fetches the newest version
+whenever the network answers. Scores in the hosted copy stay in that phone's browser and are not shared with the
+Claude version.
+
+- `npm run build` writes `dist/site/` (page, manifest, icons, `sw.js`) from `scripts/site/`. Every URL in it is
+  relative, so it works under the `/Golf-buddy/` sub-path; `npm run preview` serves it at `/Golf-buddy/`.
+- `.github/workflows/pages.yml` runs on every push to `main` (or by hand): `npm ci`, typecheck, tests, build, then
+  deploys `dist/site/` to GitHub Pages. One-time setup: repo Settings > Pages > Source: GitHub Actions.
 
 ## Where things live
 

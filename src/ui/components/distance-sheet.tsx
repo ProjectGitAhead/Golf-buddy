@@ -51,8 +51,11 @@ type Mode = 'photo' | 'gps';
 
 function DistanceSheet({ courseId, hole, onClose }: { courseId: string; hole: number; onClose: () => void }) {
   const hasGeo = typeof navigator !== 'undefined' && 'geolocation' in navigator;
-  const [mode, setMode] = useState<Mode>('photo');
   const [blockedAtOpen] = useState(gpsBlocked || !hasGeo);
+  // GPS leads where location can work: the hosted copy, which has no `window.claude`. Inside Claude the page cannot
+  // use location, so the flag photo leads there.
+  const gpsFirst = !blockedAtOpen && !(globalThis as { claude?: unknown }).claude;
+  const [mode, setMode] = useState<Mode>(gpsFirst ? 'gps' : 'photo');
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -61,6 +64,7 @@ function DistanceSheet({ courseId, hole, onClose }: { courseId: string; hole: nu
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
+  const gpsChip = <button class="chip" id="distance-mode-gps" aria-pressed={mode === 'gps'} onClick={() => setMode('gps')}>GPS</button>;
   return (
     <div class="gs-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div class="gs-sheet ds-sheet" id="distance-sheet" role="dialog" aria-modal="true" aria-labelledby="distance-title" tabIndex={-1}>
@@ -70,8 +74,9 @@ function DistanceSheet({ courseId, hole, onClose }: { courseId: string; hole: nu
         </div>
         {!blockedAtOpen && (
           <div class="seg ds-modes" role="group" aria-label="How to measure">
+            {gpsFirst && gpsChip}
             <button class="chip" id="distance-mode-photo" aria-pressed={mode === 'photo'} onClick={() => setMode('photo')}>Flag photo</button>
-            <button class="chip" id="distance-mode-gps" aria-pressed={mode === 'gps'} onClick={() => setMode('gps')}>GPS</button>
+            {!gpsFirst && gpsChip}
           </div>
         )}
         {/* Both stay mounted while the sheet is open, so switching back keeps the photo and its marks. */}

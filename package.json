@@ -9,7 +9,8 @@
     "test": "vitest run --dir src",
     "typecheck": "tsc --noEmit",
     "preview": "node scripts/build.mjs --serve",
-    "e2e": "node e2e/run.mjs"
+    "e2e": "node e2e/run.mjs",
+    "icons": "node scripts/site/icons.mjs"
   },
   "dependencies": {
     "preact": "^11.2.0"

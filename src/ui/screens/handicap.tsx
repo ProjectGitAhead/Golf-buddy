@@ -39,8 +39,20 @@ export function Handicap({ onEditRound }: { onEditRound: () => void }) {
       <AddPastScore />
       <StartingIndex hist={hist} />
       <HowCalculated />
+      <StorageNote />
     </div>
   );
+}
+
+/** Where his scores live, true for the view he is in: the Claude artifact with db, or a browser on its own. */
+function StorageNote() {
+  const store = useStore();
+  const text = store.sync !== 'local'
+    ? 'Your scores are saved to your Claude account, so they are there wherever you open this page in Claude.'
+    : store.localOk
+      ? 'Your scores are kept in this browser on this phone only. Clearing the browser\'s data for this site deletes them.'
+      : 'This browser is not letting the page save, so your scores last only until you close it.';
+  return <p class="hint" id="storage-note" style="margin-top:16px" data-where={store.sync === 'local' ? 'browser' : 'account'}>{text}</p>;
 }
 
 // ----- index ----------------------------------------------------------------------------------------------------
