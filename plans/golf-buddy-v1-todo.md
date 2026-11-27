@@ -138,3 +138,15 @@ rangefinder (12.1) and, where location is granted, GPS distance to a learned gre
 **Verification:** [ ] `npm test` (rangefinder, exif, geo) · [ ] `npm run e2e` (spec: distance) · [ ] typecheck · [ ] build
 **Dependencies:** T2.1 · **Files:** src/core/rangefinder.ts, src/core/exif.ts, src/core/geo.ts (+ tests), src/core/types.ts (two optional fields only), src/ui/components/distance-sheet.tsx, src/ui/screens/play-hole.tsx (the button and sheet hook only), src/ui/styles.css (one block at the end), e2e/distance.spec.mjs · **Size:** M
 **Risk:** none · **Screens:** distance-rangefinder, distance-gps
+
+### T5.2 Hosted copy on GitHub Pages
+**Description:** Plan section 13: `dist/site/` output (full page, manifest, icons, service worker) and the Pages
+workflow.
+**Acceptance:**
+- [ ] `npm run build` writes `dist/site/index.html`, `manifest.webmanifest`, three icons and `sw.js`; `dist/golf-buddy.html` is unchanged in rules (fragment spec still passes, no service worker text in it)
+- [ ] Served from a sub-path (`/Golf-buddy/`), the site loads, registers the worker, and loads again with the network cut (e2e, Playwright offline mode)
+- [ ] The workflow file is valid (parsed with a YAML parser in the report) and uses only the steps in plan section 13
+- [ ] Storage note on the Handicap screen is true in both contexts
+**Verification:** [ ] `npm run e2e` (spec: site) · [ ] typecheck · [ ] `npm test` · [ ] build
+**Dependencies:** T5.1 merged · **Files:** scripts/build.mjs, scripts/site/** (wrapper, sw template, icon svg), .github/workflows/pages.yml, e2e/site.spec.mjs, e2e runner (sub-path serving only), src/ui/screens/handicap.tsx (the storage note only), README.md (a "Hosted copy" section), dist/ · **Size:** M
+**Risk:** none (public site: confirm no personal data in the build) · **Screens:** none
