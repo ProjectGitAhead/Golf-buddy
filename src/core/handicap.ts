@@ -283,6 +283,9 @@ export interface HandicapHistory {
   countingIds: string[];         // entry ids of the counting scores
   waitingNine: string | null;    // a 9-hole round (no index yet) waiting for the next 9-hole round
   notPosted: { roundId: string; reason: string }[];
+  /** Per posted round, the course handicap the replay used and the round's own adjusted gross (null when it
+   *  cannot be posted): the one source for the scorecard, hole maximums and AGS shown for a posted round. */
+  roundFacts: Record<string, { courseHandicap: number | null; ags: number | null }>;
 }
 
 interface Hypothetical {
@@ -310,57 +313,13 @@ function replay(rounds: Round[], imported: ImportedDifferential[], profile: Prof
   const entries: HistoryEntry[] = [];
   const notPosted: HandicapHistory['notPosted'] = [];
   let calculated: number | null = null;
-  let pendingNine: { id: string; diff9: number } | null = null;
+  const roundFacts: HandicapHistory['roundFacts'] = {};
+  let pendingNine: { id: string; diff9: number; date: string; ags: number; incomplete: boolean } | null = null;
+  const baseFor = (indexInEffect: number | null) => ({ indexInEffect, esrAdjustment: 0 as const, totalAdjustment: 0,
+    adjustedDifferential: 0, indexAfter: null, lowIndex: null, cap: null as Cap, counting: false });
 
-  for (const item of items) {
-    const indexInEffect = calculated ?? starting;
-    let entry: HistoryEntry;
-    const base = { indexInEffect, esrAdjustment: 0 as const, totalAdjustment: 0, adjustedDifferential: 0,
-      indexAfter: null, lowIndex: null, cap: null as Cap, counting: false };
-
-    if (item.t === 'imported') {
-      entry = { ...base, kind: 'imported', id: item.imp.id, roundIds: [], date: item.date, courseHandicap: null,
-        ags: null, incomplete: false, differential: roundTenth(item.imp.differential) };
-    } else {
-      let rating: number, slope: number, par: number, nine: boolean, pcc: number, ags: number;
-      let incomplete = false; let ch: number | null;
-      if (item.t === 'round') {
-        const r = item.round;
-        ({ rating, slope, par } = r.snapshot);
-        nine = r.holesPlayed !== '18'; pcc = r.pcc ?? 0;
-        ch = indexInEffect === null ? null : courseHandicap(indexInEffect, rating, slope, par, nine ? 9 : 18);
-        const a = adjustedGrossScore(r, ch, gender);
-        if (!a.postable || a.ags === null) { notPosted.push({ roundId: r.id, reason: a.reason ?? '' }); continue; }
-        ags = a.ags; incomplete = a.incomplete;
-      } else {
-        ({ rating, slope, par, nine, pcc, ags } = item.h);
-        ch = indexInEffect === null ? null : courseHandicap(indexInEffect, rating, slope, par, nine ? 9 : 18);
-      }
-      const id = item.t === 'round' ? item.round.id : 'hypothetical';
-      const kindOf: EntryKind = item.t === 'hypothetical' ? 'hypothetical' : nine ? 'nine' : 'round';
-      if (!nine) {
-        entry = { ...base, kind: kindOf, id, roundIds: item.t === 'round' ? [id] : [], date: item.date,
-          courseHandicap: ch, ags, incomplete, differential: scoreDifferential(ags, rating, slope, pcc) };
-      } else {
-        const diff9 = nineHoleDifferential(ags, rating, slope, pcc);
-        if (indexInEffect !== null) {
-          const expected = expectedNineHoleDifferential(indexInEffect);
-          entry = { ...base, kind: kindOf, id, roundIds: item.t === 'round' ? [id] : [], date: item.date,
-            courseHandicap: ch, ags, incomplete, nineHoleDifferential: diff9, expectedNineHole: expected,
-            differential: roundTenth(diff9 + expected) };
-        } else if (pendingNine) {
-          entry = { ...base, kind: item.t === 'hypothetical' ? 'hypothetical' : 'combined-nine',
-            id: `${pendingNine.id}+${id}`, roundIds: [pendingNine.id, ...(item.t === 'round' ? [id] : [])],
-            date: item.date, courseHandicap: null, ags, incomplete, nineHoleDifferential: diff9,
-            differential: roundTenth(pendingNine.diff9 + diff9) };
-          pendingNine = null;
-        } else {
-          pendingNine = { id, diff9 };
-          continue;
-        }
-      }
-    }
-
+  /** Adds a score: exceptional-score check, the adjusted differentials, and the index (with caps) after it. */
+  const post = (entry: HistoryEntry, indexInEffect: number | null) => {
     entries.push(entry);
     // Exceptional score: only for scores made in the app (imported differentials arrive already final).
     if (entry.kind !== 'imported') {
@@ -386,6 +345,71 @@ function replay(rounds: Round[], imported: ImportedDifferential[], profile: Prof
     } else {
       calculated = null;
     }
+  };
+
+  for (const item of items) {
+    const indexInEffect = calculated ?? starting;
+    let entry: HistoryEntry;
+    const base = baseFor(indexInEffect);
+
+    if (item.t === 'imported') {
+      entry = { ...base, kind: 'imported', id: item.imp.id, roundIds: [], date: item.date, courseHandicap: null,
+        ags: null, incomplete: false, differential: roundTenth(item.imp.differential) };
+    } else {
+      let rating: number, slope: number, par: number, nine: boolean, pcc: number, ags: number;
+      let incomplete = false; let ch: number | null;
+      if (item.t === 'round') {
+        const r = item.round;
+        ({ rating, slope, par } = r.snapshot);
+        nine = r.holesPlayed !== '18'; pcc = r.pcc ?? 0;
+        ch = indexInEffect === null ? null : courseHandicap(indexInEffect, rating, slope, par, nine ? 9 : 18);
+        const a = adjustedGrossScore(r, ch, gender);
+        roundFacts[r.id] = { courseHandicap: ch, ags: a.postable ? a.ags : null };
+        if (!a.postable || a.ags === null) { notPosted.push({ roundId: r.id, reason: a.reason ?? '' }); continue; }
+        ags = a.ags; incomplete = a.incomplete;
+      } else {
+        ({ rating, slope, par, nine, pcc, ags } = item.h);
+        ch = indexInEffect === null ? null : courseHandicap(indexInEffect, rating, slope, par, nine ? 9 : 18);
+      }
+      const id = item.t === 'round' ? item.round.id : 'hypothetical';
+      const kindOf: EntryKind = item.t === 'hypothetical' ? 'hypothetical' : nine ? 'nine' : 'round';
+      if (!nine) {
+        entry = { ...base, kind: kindOf, id, roundIds: item.t === 'round' ? [id] : [], date: item.date,
+          courseHandicap: ch, ags, incomplete, differential: scoreDifferential(ags, rating, slope, pcc) };
+      } else {
+        const diff9 = nineHoleDifferential(ags, rating, slope, pcc);
+        if (indexInEffect !== null) {
+          const expected = expectedNineHoleDifferential(indexInEffect);
+          entry = { ...base, kind: kindOf, id, roundIds: item.t === 'round' ? [id] : [], date: item.date,
+            courseHandicap: ch, ags, incomplete, nineHoleDifferential: diff9, expectedNineHole: expected,
+            differential: roundTenth(diff9 + expected) };
+        } else if (pendingNine) {
+          entry = { ...base, kind: item.t === 'hypothetical' ? 'hypothetical' : 'combined-nine',
+            id: `${pendingNine.id}+${id}`, roundIds: [pendingNine.id, ...(item.t === 'round' ? [id] : [])],
+            date: item.date, courseHandicap: null, ags, incomplete, nineHoleDifferential: diff9,
+            differential: roundTenth(pendingNine.diff9 + diff9) };
+          pendingNine = null;
+        } else {
+          pendingNine = { id, diff9, date: item.date, ags, incomplete };
+          continue;
+        }
+      }
+    }
+
+    post(entry, indexInEffect);
+
+    // A nine still waiting when an index first exists is scored on its own: its 9-hole differential plus the
+    // expected score (approximation) for the index in effect at this point. Its AGS stays as held (par + 5
+    // maximums: it was played with no index). Never after a hypothetical score, which must stay last.
+    if (pendingNine && calculated !== null && item.t !== 'hypothetical') {
+      const p = pendingNine;
+      pendingNine = null;
+      const inEffect: number = calculated;
+      const expected = expectedNineHoleDifferential(inEffect);
+      post({ ...baseFor(inEffect), kind: 'nine', id: p.id, roundIds: [p.id], date: p.date, courseHandicap: null,
+        ags: p.ags, incomplete: p.incomplete, nineHoleDifferential: p.diff9, expectedNineHole: expected,
+        differential: roundTenth(p.diff9 + expected) }, inEffect);
+    }
   }
 
   const recent = entries.slice(-20);
@@ -405,6 +429,7 @@ function replay(rounds: Round[], imported: ImportedDifferential[], profile: Prof
     countingIds: entries.filter((e) => e.counting).map((e) => e.id),
     waitingNine: pendingNine ? pendingNine.id : null,
     notPosted,
+    roundFacts,
   };
 }
 

@@ -217,7 +217,10 @@ function RoundDetail({ round, hist, onBack, onOpen, onEdit }: {
   const [confirm, setConfirm] = useState(false);
   const [blocked, setBlocked] = useState(false);
   const entry = hist.entries.find((e) => e.roundIds.includes(round.id));
-  const facts = holeFacts(round, findCourse(round.courseId, courses), profile?.gender ?? 'M');
+  // Course handicap and AGS from the replay (the stored round.courseHandicap is only for a round in progress).
+  const replayed = hist.roundFacts[round.id];
+  const ch = replayed?.courseHandicap ?? null;
+  const facts = holeFacts(round, findCourse(round.courseId, courses), profile?.gender ?? 'M', ch);
   const partner = entry?.kind === 'combined-nine' ? entry.roundIds.find((id) => id !== round.id) : undefined;
   const partnerRound = partner ? rounds[partner] : undefined;
   const notPosted = hist.notPosted.find((x) => x.roundId === round.id);
@@ -239,8 +242,8 @@ function RoundDetail({ round, hist, onBack, onOpen, onEdit }: {
       <div class="tiles" style="margin-top:12px">
         <div class="tile"><small>Gross</small><b class="num" id="detail-gross">{gross(round)}</b>
           <span class="num">{round.snapshot.rating} / {round.snapshot.slope} · par {round.snapshot.par}</span></div>
-        <div class="tile"><small>Adjusted gross</small><b class="num" id="detail-ags">{entry?.ags ?? '–'}</b>
-          <span>{entry?.courseHandicap == null ? 'Holes capped at par + 5' : `Net double bogey, course handicap ${entry.courseHandicap}`}</span></div>
+        <div class="tile"><small>Adjusted gross</small><b class="num" id="detail-ags">{replayed?.ags ?? '–'}</b>
+          <span>{ch === null ? 'Holes capped at par + 5' : `Net double bogey, course handicap ${ch}`}</span></div>
         <div class="tile"><small>Differential</small>
           <b class="num" id="detail-differential">{entry ? formatSigned(entry.differential) : '–'}</b>
           <span>{entry?.totalAdjustment ? `${formatSigned(entry.adjustedDifferential)} after exceptional-score adjustment` : entry ? 'As posted' : 'Not posted yet'}</span></div>
@@ -272,7 +275,7 @@ function RoundDetail({ round, hist, onBack, onOpen, onEdit }: {
           </p>
         )}
         {hist.waitingNine === round.id && (
-          <p class="note note-quiet">This nine is held and combined with your next 9-hole round into one 18-hole score.</p>
+          <p class="note note-quiet">With no index yet, this nine is held. It is combined with your next 9-hole round into one 18-hole score, or scored on its own as soon as you have an index.</p>
         )}
         {notPosted && <p class="note" id="detail-not-posted">{notPosted.reason}</p>}
         {blocked && (
@@ -431,7 +434,8 @@ function HowCalculated() {
         <p id="how-nine"><b>Nine-hole rounds.</b> The nine-hole differential is added to an expected score for the
           other nine, worked out as 0.52 × your index + 1.2. That formula is an approximation of the USGA's
           expected-score table, so a nine-hole score here can differ by a few tenths from your association's. Before
-          you have an index, two nines are combined into one 18-hole score instead.</p>
+          you have an index, two nines are combined into one 18-hole score instead; a nine still waiting when your
+          index first exists is scored on its own with that index.</p>
         <p><b>Handicap Index.</b> From your 20 most recent scores, by date: with 20, the average of the best 8. With
           fewer: 3 scores, best 1 minus 2.0; 4, best 1 minus 1.0; 5, best 1; 6, average of the best 2 minus 1.0; 7–8,
           best 2; 9–11, best 3; 12–14, best 4; 15–16, best 5; 17–18, best 6; 19, best 7. Rounded to the tenth; at

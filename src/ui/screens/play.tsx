@@ -52,7 +52,7 @@ function Posted({ roundId, onDone }: { roundId: string; onDone: () => void }) {
           )}
         </div>
       </div>
-      {waiting && <p class="note">This nine is held and combined with your next 9-hole round into one 18-hole score.</p>}
+      {waiting && <p class="note">With no index yet, this nine is held. It is combined with your next 9-hole round into one 18-hole score, or scored on its own as soon as you have an index.</p>}
       <button class="btn btn-primary btn-block" id="posted-done" onClick={onDone}>Done</button>
     </div>
   );

@@ -24,6 +24,7 @@ export interface HoleScore {
   hole: number; strokes: number | null;
   putts?: number; fairway?: FairwayResult; penalties?: number; sand?: boolean;
   approach?: ApproachMark;
+  updatedAt?: string;               // when this hole last changed (absent on rounds saved before per-hole merging)
 }
 export interface Round {
   id: string; date: string;                              // ISO date

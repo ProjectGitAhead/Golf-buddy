@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'preact/hooks';
-import { Store, startSync } from './store';
+import { Store, startSync, watchOtherTabs } from './store';
 
 /** The one store the app uses. */
 export const store = new Store();
@@ -9,6 +9,7 @@ let started = false;
 export function startStoreSync(): void {
   if (started) return;
   started = true;
+  if (typeof window !== 'undefined') watchOtherTabs(store, window);
   setTimeout(() => { void startSync(store); }, 0);
 }
 

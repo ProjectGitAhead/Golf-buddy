@@ -1,9 +1,16 @@
 // Local-first storage (plan section 6).
 //
 // Every change is written to localStorage at once (when it is available) and queued to the `db` capability.
-// On load the page paints from local data; once `db` answers, each document is merged by `updatedAt` (newest
-// wins), anything local that `db` lacks or holds older is pushed, and deletions travel as tombstones so a round
-// deleted on this phone does not come back from the store.
+// On load the page paints from local data; once `db` answers, each document is merged, anything db lacks or holds
+// older is pushed, and from then on one `onSnapshot` listener per collection merges what other devices write.
+// Other tabs of this page are merged through the window `storage` event, and every local save merges with what is
+// stored rather than replacing it.
+//
+// Merging: newest `updatedAt` wins per document, except rounds, which merge per hole (each hole from the copy
+// that changed it last; a hole with strokes beats an empty one when a timestamp is missing; round-level fields
+// from the newer copy). Deletions are tombstone documents `{ deleted: true, updatedAt }`: a tombstone newer than a
+// copy wins on every device, an edit newer than the tombstone wins. Before each write the db copy is read and
+// merged, so a view that missed updates never overwrites newer scores.
 //
 // db layout (a document path has an even number of segments, so the per-user documents sit under one
 // per-user "golf" document):
@@ -12,7 +19,7 @@
 //   data/users/<id>/golf/courses/<courseId>   (only courses the user added or edited)
 //   data/users/<id>/golf/imports/<id>
 
-import type { Course, ImportedDifferential, Profile, Round } from '../core/types';
+import type { Course, HoleScore, ImportedDifferential, Profile, Round } from '../core/types';
 
 export type Kind = 'profile' | 'rounds' | 'courses' | 'imports';
 export const KINDS: Kind[] = ['profile', 'rounds', 'courses', 'imports'];
@@ -30,20 +37,26 @@ export type SyncState = 'local' | 'syncing' | 'synced' | 'offline';
 
 // The slice of the db capability this store uses (see the capability's db.d.ts).
 export interface DbDocSnapshot { id: string; exists: boolean; data(): Record<string, unknown> | undefined }
+export interface DbQuerySnapshot { docs: DbDocSnapshot[]; metadata?: { fromCache?: boolean } }
 export interface DbDocRef {
   get(): Promise<DbDocSnapshot>;
   set(data: Record<string, unknown>): Promise<void>;
   delete(): Promise<void>;
 }
-export interface DbCollectionRef { get(): Promise<{ docs: DbDocSnapshot[] }>; doc(id: string): DbDocRef }
+export interface DbCollectionRef {
+  get(): Promise<DbQuerySnapshot>;
+  doc(id: string): DbDocRef;
+  onSnapshot?(next: (snap: DbQuerySnapshot) => void, error?: (e: { code?: string }) => void): () => void;
+}
 export interface DbLike { doc(path: string): DbDocRef; collection(path: string): DbCollectionRef }
 
 interface Stamped { updatedAt: string }
 type Docs = Record<string, Stamped>;
+type Tombs = Record<string, string>;
 
 interface Persisted {
   data: AppData;
-  tombstones: Record<string, string>;   // "<kind>/<id>" -> deletedAt
+  tombstones: Tombs;   // "<kind>/<id>" -> deletedAt
 }
 
 export const STORAGE_KEY = 'golf-buddy:v1';
@@ -65,6 +78,49 @@ function newer(a: string | undefined, b: string | undefined): boolean {
   return (a ?? '') > (b ?? '');
 }
 
+/** JSON with sorted keys (undefined values dropped): equal content gives equal text on every device. */
+export function canon(v: unknown): string {
+  return JSON.stringify(v, (_k, val: unknown) => (val && typeof val === 'object' && !Array.isArray(val)
+    ? Object.fromEntries(Object.keys(val as object).sort().map((k) => [k, (val as Record<string, unknown>)[k]]))
+    : val));
+}
+
+/** Newer `updatedAt` wins; equal stamps with different content are settled by content, the same on every device. */
+function pickNewer<T extends { updatedAt?: string }>(a: T, b: T): T {
+  if (newer(a.updatedAt, b.updatedAt)) return a;
+  if (newer(b.updatedAt, a.updatedAt)) return b;
+  return canon(a) >= canon(b) ? a : b;
+}
+
+/** Picks one hole from two copies of a round. A hole saved before per-hole timestamps counts as changed when its
+ *  round last changed; and a score is never lost to an empty hole when either side lacks its own timestamp. */
+function pickHole(a: HoleScore, roundA: Round, b: HoleScore, roundB: Round): HoleScore {
+  const filledA = typeof a.strokes === 'number';
+  const filledB = typeof b.strokes === 'number';
+  if (filledA !== filledB && (!a.updatedAt || !b.updatedAt)) return filledA ? a : b;
+  const ta = a.updatedAt ?? roundA.updatedAt;
+  const tb = b.updatedAt ?? roundB.updatedAt;
+  if (newer(ta, tb)) return a;
+  if (newer(tb, ta)) return b;
+  return canon(a) >= canon(b) ? a : b;
+}
+
+/** Merges two copies of one round: each hole from the copy that changed it last, round fields from the newer copy.
+ *  Commutative, so every device converges on the same round. */
+export function mergeRound(a: Round, b: Round): Round {
+  if (a === b || canon(a) === canon(b)) return a;
+  const base = pickNewer(a, b);
+  const other = base === a ? b : a;
+  const holes = new Map<number, HoleScore>();
+  for (const s of base.scores) holes.set(s.hole, s);
+  for (const s of other.scores) {
+    const h = holes.get(s.hole);
+    holes.set(s.hole, h ? pickHole(h, base, s, other) : s);
+  }
+  const scores = [...holes.values()].sort((x, y) => x.hole - y.hole);
+  return { ...base, scores, updatedAt: newer(a.updatedAt, b.updatedAt) ? a.updatedAt : b.updatedAt };
+}
+
 function isValidDoc(kind: Kind, body: unknown): body is Stamped {
   if (!body || typeof body !== 'object') return false;
   const o = body as Record<string, unknown>;
@@ -75,35 +131,58 @@ function isValidDoc(kind: Kind, body: unknown): body is Stamped {
   return true;
 }
 
-export interface MergeResult<T> {
-  merged: Record<string, T>;
-  push: string[];                       // ids to write to db (local is newer or db lacks them)
-  remove: string[];                     // ids to delete from db (deleted here after db's last change)
-  tombstones: Record<string, string>;   // tombstones still in force, by id
+function isTombstone(body: unknown): body is { deleted: true; updatedAt: string } {
+  const o = body as Record<string, unknown> | undefined;
+  return !!o && o.deleted === true && typeof o.updatedAt === 'string';
 }
 
-/** Merges one collection: newest `updatedAt` wins; a tombstone beats any remote copy older than the deletion. */
+/** Splits db documents into live copies and tombstones; anything malformed is ignored. */
+function parseDocs(kind: Kind, snaps: DbDocSnapshot[]): { docs: Docs; tombs: Tombs } {
+  const docs: Docs = {};
+  const tombs: Tombs = {};
+  for (const d of snaps) {
+    if (!d.exists) continue;
+    const body = d.data();
+    if (isTombstone(body)) tombs[d.id] = body.updatedAt;
+    else if (isValidDoc(kind, body)) docs[d.id] = JSON.parse(JSON.stringify(body)) as Stamped;
+  }
+  return { docs, tombs };
+}
+
+export interface MergeResult<T> {
+  merged: Record<string, T>;
+  push: string[];                       // ids whose live copy db needs (db lacks it, or holds something else)
+  remove: string[];                     // ids whose tombstone db needs (deleted, and db does not say so yet)
+  tombstones: Record<string, string>;   // tombstones in force, by id
+}
+
+/**
+ * Merges one collection. Live copies: newest `updatedAt` wins, or `combine` (rounds: per hole). A tombstone (local
+ * or remote, the newer of the two) beats any copy not changed after it; a copy changed after it wins.
+ */
 export function mergeDocs<T extends Stamped>(local: Record<string, T>, remote: Record<string, T>,
-  tombstones: Record<string, string>): MergeResult<T> {
+  tombstones: Tombs, remoteTombs: Tombs = {}, combine?: (a: T, b: T) => T): MergeResult<T> {
   const merged: Record<string, T> = {};
   const push: string[] = [];
   const remove: string[] = [];
-  const tombs: Record<string, string> = { ...tombstones };
-  const ids = new Set([...Object.keys(local), ...Object.keys(remote), ...Object.keys(tombstones)]);
+  const tombs: Tombs = {};
+  const ids = new Set([...Object.keys(local), ...Object.keys(remote), ...Object.keys(tombstones),
+    ...Object.keys(remoteTombs)]);
   for (const id of ids) {
     const l = local[id];
     const r = remote[id];
-    const t = tombs[id];
-    if (t && !l) {
-      if (r && newer(r.updatedAt, t)) { merged[id] = r; delete tombs[id]; continue; }
-      if (r) remove.push(id);
+    const lt = tombstones[id];
+    const rt = remoteTombs[id];
+    const t = newer(lt, rt) ? lt : rt;
+    const live = l && r ? (combine ? combine(l, r) : pickNewer(l, r)) : l ?? r;
+    if (t && (!live || !newer(live.updatedAt, t))) {
+      tombs[id] = t;
+      if (rt !== t) remove.push(id);
       continue;
     }
-    if (l && r) {
-      if (newer(r.updatedAt, l.updatedAt)) merged[id] = r;
-      else { merged[id] = l; if (newer(l.updatedAt, r.updatedAt)) push.push(id); }
-    } else if (l) { merged[id] = l; push.push(id); }
-    else if (r) merged[id] = r;
+    if (!live) continue;
+    merged[id] = live;
+    if (!r || (live !== r && canon(live) !== canon(r))) push.push(id);
   }
   return { merged, push, remove, tombstones: tombs };
 }
@@ -116,6 +195,15 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+const pick = <T>(rec: Record<string, T>, ids: string[]): Record<string, T> => {
+  const out: Record<string, T> = {};
+  for (const id of ids) if (id in rec) out[id] = rec[id];
+  return out;
+};
+
+/** The hole as the player sees it (without its timestamp), to tell whether a save changed it. */
+const holeContent = (s: HoleScore) => { const { updatedAt: _u, ...rest } = s; return canon(rest); };
 
 export interface StoreOptions {
   storage?: Storage | null;
@@ -140,6 +228,7 @@ export class Store {
   private again = new Set<string>();
   private failed = new Set<string>();
   private running = new Map<string, Promise<void>>();
+  private subs = new Map<Kind, () => void>();
   private status: SyncState = 'local';
   /** False when localStorage refused a write (private mode, full): the data then lives only in memory and db. */
   localOk = true;
@@ -149,7 +238,7 @@ export class Store {
     this.key = opts.storageKey ?? STORAGE_KEY;
     this.writeDelay = opts.writeDelayMs ?? 600;
     this.loadTimeout = opts.loadTimeoutMs ?? 10_000;
-    this.state = this.read();
+    this.state = this.read() ?? { data: emptyData(), tombstones: {} };
   }
 
   // ----- reading ------------------------------------------------------------------------------------------------
@@ -164,16 +253,25 @@ export class Store {
 
   // ----- writing ------------------------------------------------------------------------------------------------
 
+  /** Saves a round. Every hole whose content changed from the stored copy gets the save's timestamp. */
   saveRound(round: Round): Round {
-    const r = { ...round, updatedAt: stamp(this.state.data.rounds[round.id]?.updatedAt) };
+    const prev = this.state.data.rounds[round.id];
+    const now = stamp(prev?.updatedAt);
+    const scores = round.scores.map((s) => {
+      const p = prev?.scores.find((x) => x.hole === s.hole) ?? { hole: s.hole, strokes: null };
+      return holeContent(s) === holeContent(p) ? (p.updatedAt ? { ...s, updatedAt: p.updatedAt } : s)
+        : { ...s, updatedAt: now };
+    });
+    const r = { ...round, scores, updatedAt: now };
     this.change('rounds', r.id, { ...this.state.data, rounds: { ...this.state.data.rounds, [r.id]: r } });
     return r;
   }
 
   deleteRound(id: string): void {
     const rounds = { ...this.state.data.rounds };
+    const prev = rounds[id]?.updatedAt;
     delete rounds[id];
-    this.change('rounds', id, { ...this.state.data, rounds }, true);
+    this.change('rounds', id, { ...this.state.data, rounds }, prev ?? '');
   }
 
   saveCourse(course: Course): Course {
@@ -184,8 +282,9 @@ export class Store {
 
   deleteCourse(id: string): void {
     const courses = { ...this.state.data.courses };
+    const prev = courses[id]?.updatedAt;
     delete courses[id];
-    this.change('courses', id, { ...this.state.data, courses }, true);
+    this.change('courses', id, { ...this.state.data, courses }, prev ?? '');
   }
 
   saveImport(imp: ImportedDifferential & { updatedAt?: string }): void {
@@ -196,8 +295,9 @@ export class Store {
 
   deleteImport(id: string): void {
     const imports = { ...this.state.data.imports };
+    const prev = (imports[id] as Partial<Stamped> | undefined)?.updatedAt;
     delete imports[id];
-    this.change('imports', id, { ...this.state.data, imports }, true);
+    this.change('imports', id, { ...this.state.data, imports }, prev ?? '');
   }
 
   saveProfile(profile: Profile): void {
@@ -207,7 +307,8 @@ export class Store {
 
   // ----- db -----------------------------------------------------------------------------------------------------
 
-  /** Loads every document from db, merges, and pushes what db lacks. Resolves once the merge is done or failed. */
+  /** Loads every document from db, merges, pushes what db lacks, then listens for changes made elsewhere.
+   *  Resolves once the first merge is done or failed. */
   async connect(db: DbLike, uid: string): Promise<void> {
     this.connectArgs = { db, uid };
     if (this.loading || this.db) return;
@@ -215,30 +316,14 @@ export class Store {
     this.loading = true;
     this.setStatus('syncing');
     try {
-      const remote = await withTimeout(Promise.all(KINDS.map(async (kind) => {
-        const docs: Docs = {};
-        const snap = await db.collection(`${base}/${kind}`).get();
-        for (const d of snap.docs) {
-          if (!d.exists) continue;
-          const body = d.data();
-          if (isValidDoc(kind, body)) docs[d.id] = JSON.parse(JSON.stringify(body)) as Stamped;
-        }
-        return docs;
-      })), this.loadTimeout);
+      const remote = await withTimeout(Promise.all(KINDS.map(async (kind) =>
+        parseDocs(kind, (await db.collection(`${base}/${kind}`).get()).docs))), this.loadTimeout);
 
-      const data = { ...this.state.data };
-      const tombstones: Record<string, string> = {};
       const writes: string[] = [];
       KINDS.forEach((kind, i) => {
-        const local = this.docsOf(kind, this.state.data);
-        const tombs = this.tombsOf(kind);
-        const m = mergeDocs(local, remote[i], tombs);
-        if (kind === 'profile') data.profile = (m.merged[PROFILE_ID] as unknown as Profile) ?? null;
-        else (data as unknown as Record<Kind, Docs>)[kind] = m.merged;
-        for (const [id, t] of Object.entries(m.tombstones)) tombstones[`${kind}/${id}`] = t;
+        const m = this.mergeKind(kind, remote[i].docs, remote[i].tombs);
         for (const id of [...m.push, ...m.remove]) writes.push(`${kind}/${id}`);
       });
-      this.state = { data, tombstones };
       this.persist();
       this.db = db;
       this.base = base;
@@ -247,15 +332,17 @@ export class Store {
       for (const k of writes) this.schedule(k, 0);
       for (const k of this.failed) this.schedule(k, 0);
       this.updateStatus();
+      this.listen();
     } catch {
       this.loading = false;
       this.setStatus('offline');
     }
   }
 
-  /** Retries a connect that failed, and writes that failed. Safe to call often (on `online`, on focus). */
+  /** Retries a connect that failed, listeners that ended, and writes that failed. Safe to call often. */
   retry(): void {
     if (!this.db && this.connectArgs && !this.loading) { void this.connect(this.connectArgs.db, this.connectArgs.uid); return; }
+    this.listen();
     for (const k of [...this.failed]) this.schedule(k, 0);
   }
 
@@ -267,24 +354,98 @@ export class Store {
     }
   }
 
+  /** Merges what another tab of this page saved (call on the window `storage` event). */
+  mergeStored(): void {
+    const stored = this.read();
+    if (!stored) return;
+    let changed = false;
+    for (const kind of KINDS) {
+      if (this.mergeKind(kind, this.docsOf(kind, stored.data), this.tombsOf(kind, stored.tombstones)).changed) changed = true;
+    }
+    if (canon(this.state) !== canon(stored)) this.persist();
+    if (changed) this.emit();
+  }
+
+  /** Stops the db listeners (tests, teardown). */
+  close(): void {
+    for (const u of this.subs.values()) { try { u(); } catch { /* already gone */ } }
+    this.subs.clear();
+  }
+
   // ----- internals ----------------------------------------------------------------------------------------------
+
+  /** One `onSnapshot` per collection, opened once after connect (and again only after a listener ended). */
+  private listen(): void {
+    const db = this.db;
+    if (!db) return;
+    for (const kind of KINDS) {
+      if (this.subs.has(kind)) continue;
+      const coll = db.collection(`${this.base}/${kind}`);
+      if (typeof coll.onSnapshot !== 'function') continue;
+      try {
+        const unsub = coll.onSnapshot((snap) => this.onRemote(kind, snap), () => { this.subs.delete(kind); });
+        this.subs.set(kind, unsub);
+      } catch { /* this view cannot listen: edits from elsewhere arrive at the next load */ }
+    }
+  }
+
+  private onRemote(kind: Kind, snap: DbQuerySnapshot): void {
+    const remote = parseDocs(kind, snap.docs);
+    const m = this.mergeKind(kind, remote.docs, remote.tombs);
+    if (m.changed) { this.persist(); this.emit(); }
+    // A cached view may simply be behind: only a confirmed snapshot says db lacks something.
+    if (!snap.metadata?.fromCache) for (const id of [...m.push, ...m.remove]) this.schedule(`${kind}/${id}`, this.writeDelay);
+  }
+
+  /**
+   * Merges remote copies and tombstones of one kind into the state (only `ids`, when given). Returns what db
+   * needs and whether the state changed.
+   */
+  private mergeKind(kind: Kind, remote: Docs, remoteTombs: Tombs, ids?: string[]):
+    { push: string[]; remove: string[]; changed: boolean } {
+    const allLocal = this.docsOf(kind, this.state.data);
+    const allTombs = this.tombsOf(kind, this.state.tombstones);
+    const local = ids ? pick(allLocal, ids) : allLocal;
+    const tombs = ids ? pick(allTombs, ids) : allTombs;
+    const m = mergeDocs(local, remote, tombs, remoteTombs,
+      kind === 'rounds' ? (mergeRound as unknown as (a: Stamped, b: Stamped) => Stamped) : undefined);
+    let docs = m.merged;
+    let kindTombs = m.tombstones;
+    if (ids) {
+      docs = { ...allLocal }; kindTombs = { ...allTombs };
+      for (const id of ids) { delete docs[id]; delete kindTombs[id]; }
+      Object.assign(docs, m.merged); Object.assign(kindTombs, m.tombstones);
+    }
+    const changed = canon(docs) !== canon(allLocal) || canon(kindTombs) !== canon(allTombs);
+    if (changed) {
+      const data = { ...this.state.data };
+      if (kind === 'profile') data.profile = (docs[PROFILE_ID] as unknown as Profile) ?? null;
+      else (data as unknown as Record<Kind, Docs>)[kind] = docs;
+      const tombstones: Tombs = {};
+      for (const [k, t] of Object.entries(this.state.tombstones)) if (!k.startsWith(`${kind}/`)) tombstones[k] = t;
+      for (const [id, t] of Object.entries(kindTombs)) tombstones[`${kind}/${id}`] = t;
+      this.state = { data, tombstones };
+    }
+    return { push: m.push, remove: m.remove, changed };
+  }
 
   private docsOf(kind: Kind, data: AppData): Docs {
     if (kind === 'profile') return data.profile ? { [PROFILE_ID]: data.profile } : {};
     return data[kind] as unknown as Docs;
   }
 
-  private tombsOf(kind: Kind): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const [k, t] of Object.entries(this.state.tombstones)) {
+  private tombsOf(kind: Kind, all: Tombs): Tombs {
+    const out: Tombs = {};
+    for (const [k, t] of Object.entries(all)) {
       if (k.startsWith(`${kind}/`)) out[k.slice(kind.length + 1)] = t;
     }
     return out;
   }
 
-  private change(kind: Kind, id: string, data: AppData, deleted = false): void {
+  /** `deletedAfter` (a deletion): the tombstone is stamped after the deleted copy's own `updatedAt`. */
+  private change(kind: Kind, id: string, data: AppData, deletedAfter?: string): void {
     const tombstones = { ...this.state.tombstones };
-    if (deleted) tombstones[`${kind}/${id}`] = stamp();
+    if (deletedAfter !== undefined) tombstones[`${kind}/${id}`] = stamp(deletedAfter || undefined);
     else delete tombstones[`${kind}/${id}`];
     this.state = { data, tombstones };
     this.persist();
@@ -310,6 +471,7 @@ export class Store {
     return p;
   }
 
+  /** Reads the db copy, merges it in (so a stale view never overwrites newer scores), and writes only what db lacks. */
   private async writeLoop(key: string): Promise<void> {
     const db = this.db!;
     try {
@@ -318,10 +480,19 @@ export class Store {
         const slash = key.indexOf('/');
         const kind = key.slice(0, slash) as Kind;
         const id = key.slice(slash + 1);
-        const body = this.docsOf(kind, this.state.data)[id];
         const op = async () => {
           const ref = db.doc(`${this.base}/${kind}/${id}`);
-          await (body ? ref.set(JSON.parse(JSON.stringify(body))) : ref.delete());
+          const snap = await ref.get();
+          const remote = parseDocs(kind, [{ id, exists: snap.exists, data: () => snap.data() }]);
+          const m = this.mergeKind(kind, remote.docs, remote.tombs, [id]);
+          if (m.changed) { this.persist(); this.emit(); }
+          if (m.push.includes(id)) {
+            const body = this.docsOf(kind, this.state.data)[id];
+            if (body) await ref.set(JSON.parse(JSON.stringify(body)));
+          } else if (m.remove.includes(id)) {
+            const t = this.tombsOf(kind, this.state.tombstones)[id];
+            if (t) await ref.set({ deleted: true, updatedAt: t });
+          }
         };
         try {
           await op();
@@ -357,7 +528,7 @@ export class Store {
     for (const fn of this.listeners) { try { fn(); } catch { /* a listener must not break the store */ } }
   }
 
-  private read(): Persisted {
+  private read(): Persisted | null {
     try {
       const raw = this.storage?.getItem(this.key);
       if (raw) {
@@ -369,13 +540,29 @@ export class Store {
         };
       }
     } catch { /* unreadable local data: start empty, db may still restore it */ }
-    return { data: emptyData(), tombstones: {} };
+    return null;
   }
 
+  /** Writes the state to localStorage, first merging what is stored there (another tab may have saved since). */
   private persist(): void {
     if (!this.storage) { this.localOk = false; return; }
-    try { this.storage.setItem(this.key, JSON.stringify(this.state)); this.localOk = true; } catch { this.localOk = false; }
+    const stored = this.read();
+    if (stored) {
+      for (const kind of KINDS) this.mergeKind(kind, this.docsOf(kind, stored.data), this.tombsOf(kind, stored.tombstones));
+    }
+    try { this.storage.setItem(this.key, canon(this.state)); this.localOk = true; } catch { this.localOk = false; }
   }
+}
+
+/** Merges what other tabs of this page save to localStorage, as they save it. Returns the unsubscribe. */
+export function watchOtherTabs(store: Store, target: Pick<Window, 'addEventListener' | 'removeEventListener'>,
+  key = STORAGE_KEY): () => void {
+  const onStorage = (e: Event) => {
+    const k = (e as StorageEvent).key;
+    if (k === null || k === key) store.mergeStored();
+  };
+  target.addEventListener('storage', onStorage);
+  return () => target.removeEventListener('storage', onStorage);
 }
 
 type ClaudeWindow = { claude?: { use?: (name: string) => Promise<unknown> } };

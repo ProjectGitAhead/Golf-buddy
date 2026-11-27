@@ -260,6 +260,35 @@ describe('score differentials', () => {
     // 0.904 x 9.4 = 8.498 -> 8.5 ; 0.9417 x 12 = 11.3 ; sum 19.8
     expect(e.differential).toBe(19.8);
   });
+  it('roundFacts gives the replayed course handicap and AGS, not the stored one', () => {
+    const r = { ...round({ date: day(0), gross: 90, id: 'cf' }), courseHandicap: 30 };
+    const h = computeHistory([r], [], { ...PROFILE, startingIndex: 10 });
+    const e = h.entries[0];
+    expect(h.roundFacts.cf).toEqual({ courseHandicap: e.courseHandicap, ags: e.ags });
+    expect(h.roundFacts.cf.courseHandicap).not.toBe(30);
+  });
+  it('a nine still waiting when an index first exists is scored on its own with that index', () => {
+    const front = HOLES.slice(0, 9);
+    const a = round({ date: day(0), holes: front, holesPlayed: 'F9', rating: 35.6, slope: 125, gross: 45, id: 'a' });
+    const full = [1, 2, 3].map((n) => round({ date: day(n), gross: 90, id: `f${n}` }));
+    const later = round({ date: day(5), holes: front, holesPlayed: 'F9', rating: 35.6, slope: 125, gross: 44, id: 'z' });
+    const h = computeHistory([a, ...full, later], [], PROFILE);
+    expect(h.waitingNine).toBeNull();
+    const ids = h.entries.map((e) => e.id);
+    expect(ids).toEqual(['f1', 'f2', 'f3', 'a', 'z']);      // scored right after the third score made the index
+    const third = h.entries[2];
+    const e = h.entries[3];
+    expect(e.kind).toBe('nine');
+    expect(e.roundIds).toEqual(['a']);
+    expect(e.date).toBe(day(0));
+    expect(e.indexInEffect).toBe(third.indexAfter);
+    expect(e.courseHandicap).toBeNull();                   // played with no index: par + 5 maximums
+    expect(e.nineHoleDifferential).toBe(nineHoleDifferential(45, 35.6, 125, 0));
+    expect(e.expectedNineHole).toBe(expectedNineHoleDifferential(third.indexAfter!));
+    expect(e.differential).toBe(roundTenth(e.nineHoleDifferential! + e.expectedNineHole!));
+    expect(h.roundFacts.a).toEqual({ courseHandicap: null, ags: 45 });
+    expect(h.roundFacts.z.courseHandicap).not.toBeNull();
+  });
 });
 
 describe('index table', () => {

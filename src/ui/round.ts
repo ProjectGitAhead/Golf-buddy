@@ -53,10 +53,16 @@ export interface HoleFacts {
   score: HoleScore;
 }
 
-/** Per-hole facts for a round, from its frozen snapshot (yards come from the course, which the snapshot lacks). */
-export function holeFacts(round: Round, course: Course | undefined, gender: Gender): HoleFacts[] {
+/**
+ * Per-hole facts for a round, from its frozen snapshot (yards come from the course, which the snapshot lacks).
+ * `courseHandicap` overrides the stored one: posted rounds pass the course handicap from `computeHistory`
+ * (`roundFacts`), so the maximums shown are the ones the posted AGS used. The stored `round.courseHandicap` is
+ * only for the round in progress.
+ */
+export function holeFacts(round: Round, course: Course | undefined, gender: Gender,
+  courseHandicap: number | null = round.courseHandicap): HoleFacts[] {
   const holes = round.snapshot.holes;
-  const ch = round.courseHandicap;
+  const ch = courseHandicap;
   const received = ch === null ? holes.map(() => 0) : strokeAllocation(holes, ch, gender);
   const tee = course?.tees.find((t) => t.id === round.teeId);
   return holes.map((h, i) => ({

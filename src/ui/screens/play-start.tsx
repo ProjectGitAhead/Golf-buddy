@@ -33,8 +33,10 @@ export function StartRound({ startCourseId, onStarted }: { startCourseId: string
   const tee = tees.find((t) => t.id === teeId) ?? tees.find((t) => t.gender === gender) ?? tees[0];
   const [holes, setHoles] = useState<Round['holesPlayed']>('18');
   const [date, setDate] = useState(todayISO());
-  const [indexText, setIndexText] = useState(
-    profile?.startingIndex === undefined ? '' : formatIndex(profile.startingIndex));
+  // The field follows the profile (which can arrive from db after this screen opened) until the user types in it;
+  // an untouched field never writes to the profile.
+  const [indexDraft, setIndexDraft] = useState<string | null>(null);
+  const indexText = indexDraft ?? (profile?.startingIndex === undefined ? '' : formatIndex(profile.startingIndex));
   const parsed = parseIndex(indexText);
   const indexError = Number.isNaN(parsed);
 
@@ -50,7 +52,7 @@ export function StartRound({ startCourseId, onStarted }: { startCourseId: string
   const lastEntry = last ? hist.entries.find((e) => e.roundIds.includes(last.id)) : undefined;
 
   const saveStartingIndex = () => {
-    if (indexError || parsed === profile?.startingIndex) return;
+    if (indexDraft === null || indexError || parsed === profile?.startingIndex) return;
     store.saveProfile({ gender, ...store.data.profile, startingIndex: parsed, updatedAt: '' });
   };
 
@@ -59,7 +61,7 @@ export function StartRound({ startCourseId, onStarted }: { startCourseId: string
     const calculated = hist.indexSource === 'calculated';
     const r = createRound(course, tee, holes, date || todayISO(), calculated ? hist.currentIndex : parsed ?? null);
     store.saveRound(r);
-    store.saveProfile({ gender, ...store.data.profile, ...(calculated ? {} : { startingIndex: parsed }),
+    store.saveProfile({ gender, ...store.data.profile, ...(calculated || indexDraft === null ? {} : { startingIndex: parsed }),
       homeCourseId: course.id, defaultTeeId: tee.id, updatedAt: '' });
     onStarted();
   };
@@ -120,7 +122,7 @@ export function StartRound({ startCourseId, onStarted }: { startCourseId: string
             <label class="field" style="margin-top:12px"><span>Your current index (optional)</span>
               <input class="input num" id="starting-index" inputMode="decimal" placeholder="e.g. 14.2"
                 value={indexText} aria-invalid={indexError}
-                onInput={(e) => setIndexText((e.target as HTMLInputElement).value)} onBlur={saveStartingIndex} />
+                onInput={(e) => setIndexDraft((e.target as HTMLInputElement).value)} onBlur={saveStartingIndex} />
               {indexError && <p class="error">Enter an index from 0 to 54, or +0.1 to +10 for a plus handicap.</p>}
             </label>
           )}
