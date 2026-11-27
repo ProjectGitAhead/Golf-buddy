@@ -33,6 +33,10 @@ jobs:
             echo "::error::The FLY_API_TOKEN secret contains unexpected characters. Paste the token again as one line."
             exit 1
           fi
+          if ! printf '%s' "$CLEAN" | grep -Eq '^(FlyV1 fm[0-9]_|fo1_|fm2_)'; then
+            echo "::error::The FLY_API_TOKEN secret does not look like a Fly token (it should start with FlyV1). Paste the token itself, not a command, as one line."
+            exit 1
+          fi
           echo "::add-mask::$CLEAN"
           echo "FLY_API_TOKEN=$CLEAN" >> "$GITHUB_ENV"
           if [ "$CLEAN" = "$RAW_TOKEN" ]; then CHANGED=no; else CHANGED=yes; fi
@@ -51,14 +55,30 @@ jobs:
       - name: Create the app if it does not exist yet
         run: |
           APP=$(sed -n 's/^app = "\(.*\)"/\1/p' fly.toml)
-          if out=$(flyctl status --app "$APP" 2>&1); then
+          case "$FLY_API_TOKEN" in
+            "FlyV1 "*) AUTH="$FLY_API_TOKEN" ;;
+            *) AUTH="Bearer $FLY_API_TOKEN" ;;
+          esac
+          GET_BODY=$(mktemp)
+          POST_BODY=$(mktemp)
+          GET_CODE=$(curl -sS --max-time 30 -o "$GET_BODY" -w '%{http_code}' \
+            -H "Authorization: $AUTH" "https://api.machines.dev/v1/apps/$APP") || GET_CODE=000
+          if [ "$GET_CODE" = "200" ]; then
             echo "App exists"
-          else
-            echo "flyctl status failed:"
-            echo "$out"
-            if ! flyctl apps create "$APP" --org "$FLY_ORG"; then
-              echo "::error::Could not find or create the Fly app $APP. Either create it once yourself (fly apps create $APP) and use a token that covers it, or use an organisation token (fly tokens create org) and set the repository variable FLY_ORG to that organisation's slug (fly orgs list). See README, Hosted copy."
-              exit 1
-            fi
+            exit 0
           fi
+          PAYLOAD=$(jq -n --arg app "$APP" --arg org "$FLY_ORG" '{app_name: $app, org_slug: $org}')
+          POST_CODE=$(curl -sS --max-time 30 -o "$POST_BODY" -w '%{http_code}' \
+            -X POST -H "Authorization: $AUTH" -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "https://api.machines.dev/v1/apps") || POST_CODE=000
+          if [ "$POST_CODE" = "200" ] || [ "$POST_CODE" = "201" ]; then
+            echo "App created"
+            exit 0
+          fi
+          echo "Lookup HTTP $GET_CODE:"
+          cat "$GET_BODY"; echo
+          echo "Create HTTP $POST_CODE:"
+          cat "$POST_BODY"; echo
+          echo "::error::Could not find or create the Fly app $APP (lookup HTTP $GET_CODE, create HTTP $POST_CODE). If the token is valid, set the repository variable FLY_ORG to your Fly organisation's slug (shown in the Fly dashboard URL). See README, Hosted copy."
+          exit 1
       - run: flyctl deploy --remote-only --ha=false
