@@ -375,7 +375,7 @@ button:disabled{cursor:default;opacity:.45}
 .rf-pm{font-size:24px;font-weight:800;color:var(--ink);padding:4px 12px;border-radius:12px;background:var(--surface-2)}
 .rf-wait{font-size:18px;font-weight:800;line-height:1.25;color:var(--ink)}
 .rf-basis{margin:6px 2px 0;font-size:14px;font-weight:700;color:var(--muted)}
-.rf-basis[data-source="guess"]{color:var(--warn-ink);background:var(--warn-bg);padding:6px 10px;border-radius:10px;margin-inline:0}
+.rf-basis[data-source="guess"],.rf-basis[data-source="zoom"]{color:var(--warn-ink);background:var(--warn-bg);padding:6px 10px;border-radius:10px;margin-inline:0}
 .rf-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
 .rf-flag{margin-top:16px;max-width:240px}
 .rf-honest{margin:8px 2px 0;font-size:13px;color:var(--muted)}
@@ -386,3 +386,6 @@ button:disabled{cursor:default;opacity:.45}
 .gps-ok{color:var(--turf)}
 .gps-start{display:grid;gap:10px}
 .gps-start .gs-hint{margin:0}
+.rf-zoomnote{margin-top:10px;padding:12px;border-radius:12px;background:var(--surface);border:1px solid var(--line)}
+.rf-zoomnote p{margin:0 0 10px;font-size:14.5px;font-weight:600}
+.rf-zoomnote .chip{width:100%}

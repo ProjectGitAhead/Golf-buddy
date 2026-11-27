@@ -1,5 +1,5 @@
 // T5.1: the distance sheet on the hole screen. Rangefinder with generated JPEGs (big- and little-endian EXIF, digital
-// zoom, no EXIF, an unreadable file), zoom / pan / pinch / drag with the loupe, the flagstick setting; GPS with a
+// zoom and its toggle, no EXIF, an unreadable file), zoom / pan / pinch / drag with the loupe, the flagstick setting; GPS with a
 // mocked position (save a green, move, measure a shot) and with location refused. 390 px phone, light and dark.
 import { mkdirSync } from 'node:fs';
 import { assert, eq, noHorizontalScroll, startRound, text } from './lib.mjs';
@@ -208,14 +208,24 @@ async function rangefinder(browser, baseURL) {
     eq(stored, 7.5, 'flagstick height saved in the profile');
     await page.click('#rf-flag-minus');
 
-    // Little-endian EXIF with 2x digital zoom: 26 mm x 2 on an 84 px stick is 168 yd again.
+    // Little-endian EXIF, 26 mm written, DigitalZoomRatio 2, 84 px stick: used as written, 84 yd and approximate;
+    // the toggle applies the zoom (52 mm, 168 yd).
     const zoomed = await stickJpeg(page, 84);
     await choose(page, file(withExif(zoomed.buf, { le: true, f35: 26, zoom: 2 })));
     await page.waitForFunction(() => !document.querySelector('#rf-mark-top') && document.querySelector('#rf-stage[data-scale]'));
     await zoomTo(page, 2.5);
     await placeBoth(page, zoomed.top, zoomed.bottom);
-    eq(await readYards(page), 168, 'digital zoom folded in');
-    eq(await text(page, '#rf-lens'), 'Lens 52 mm (26 mm x 2 digital zoom), read from the photo · 7 ft flagstick', 'zoom line');
+    eq(await readYards(page), 84, 'focal length used as written');
+    eq(await text(page, '#rf-pm'), '± 2 yd', 'plus/minus at 84 px');
+    eq(await page.getAttribute('#rf-lens', 'data-source'), 'zoom', 'zoomed photo marked approximate');
+    eq(await text(page, '#rf-lens'), 'Approximate: lens 26 mm as the photo states it, zoomed 2x · 7 ft flagstick', 'zoom line, off');
+    eq(await page.getAttribute('#rf-apply-zoom', 'aria-pressed'), 'false', 'zoom toggle off by default');
+    assert((await text(page, '#rf-zoom-note')).startsWith('This photo was zoomed 2x.'), 'zoom note');
+    await page.click('#rf-apply-zoom');
+    eq(await readYards(page), 168, 'zoom applied');
+    eq(await text(page, '#rf-lens'), 'Approximate: lens 52 mm (26 mm from the photo x 2 zoom) · 7 ft flagstick', 'zoom line, on');
+    await page.locator('#rf-zoom-note').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `${SHOTS}/distance-rangefinder-zoom-light.png` });
     s = await page.evaluate(() => window.__closed);
     assert(s >= 1, 'the previous photo was released when a new one was chosen');
 

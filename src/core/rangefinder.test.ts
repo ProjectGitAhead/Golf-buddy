@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampFlagFt, distanceYd, effectiveF35, focalPx, LENSES, measure, spanPx } from './rangefinder';
+import { clampFlagFt, distanceYd, effectiveF35, focalPx, hasDigitalZoom, LENSES, measure, spanPx } from './rangefinder';
 
 describe('focalPx', () => {
   it('uses the image diagonal against the 43.27 mm full-frame diagonal', () => {
@@ -34,12 +34,21 @@ describe('measure', () => {
     expect(m.ok && m.yards).toBe(199);
     expect(m.ok && m.plusMinus).toBe(3);
   });
-  it('digital zoom multiplies the focal length', () => {
-    expect(effectiveF35(26, 2)).toBe(52);
-    expect(effectiveF35(26, 0)).toBe(26);
-    expect(effectiveF35(26)).toBe(26);
-    const zoomed = measure({ flagFt: 7, f35: effectiveF35(26, 2), width: 4032, height: 3024, heightPx: 84 });
-    expect(zoomed.ok && zoomed.yards).toBe(168);
+  it('digital zoom: the EXIF focal length is used as written unless he applies the zoom', () => {
+    expect(effectiveF35(39, 1.5)).toBe(39);                 // iPhone: 1.5x on 26 mm is already written as 39 mm
+    expect(effectiveF35(26, 2, true)).toBe(52);
+    expect(effectiveF35(26, 1.03, true)).toBe(26);          // at or below 1.05 counts as no zoom
+    expect(effectiveF35(26, 0, true)).toBe(26);
+    expect(effectiveF35(26, undefined, true)).toBe(26);
+    // 26 mm as written, 84 px stick: 7 x 3028.4 / 84 / 3 = 84 yd; with 2x applied, 168 yd.
+    const asWritten = measure({ flagFt: 7, f35: effectiveF35(26, 2), width: 4032, height: 3024, heightPx: 84 });
+    expect(asWritten.ok && asWritten.yards).toBe(84);
+    expect(asWritten.ok && asWritten.plusMinus).toBe(2);
+    const applied = measure({ flagFt: 7, f35: effectiveF35(26, 2, true), width: 4032, height: 3024, heightPx: 84 });
+    expect(applied.ok && applied.yards).toBe(168);
+  });
+  it('hasDigitalZoom ignores ratios of 1.05 and below', () => {
+    expect([undefined, 0, 1, 1.05, 1.06, 2].map(hasDigitalZoom)).toEqual([false, false, false, false, true, true]);
   });
   it('refuses a span too short to read and bad input', () => {
     expect(measure({ flagFt: 7, f35: 26, width: 4032, height: 3024, heightPx: 4 })).toEqual({ ok: false, reason: 'too-short' });

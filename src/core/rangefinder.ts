@@ -20,9 +20,22 @@ export const LENSES: { label: string; mm: number }[] = [
 
 export interface Point { x: number; y: number }
 
-/** The 35 mm-equivalent focal length actually used, folding in digital zoom (EXIF ratio 0 or absent means none). */
-export function effectiveF35(focal35: number, digitalZoom?: number): number {
-  return focal35 * (digitalZoom && digitalZoom > 0 ? digitalZoom : 1);
+/** DigitalZoomRatio at or below this counts as no zoom (phones write 1, 1.0 or 1.01; 0 means "not used"). */
+export const ZOOM_NOTICE_RATIO = 1.05;
+
+/** True when the photo says it was digitally zoomed. */
+export function hasDigitalZoom(digitalZoom?: number): digitalZoom is number {
+  return typeof digitalZoom === 'number' && digitalZoom > ZOOM_NOTICE_RATIO;
+}
+
+/**
+ * The 35 mm-equivalent focal length to measure with. iPhones and many Android phones already fold digital zoom into
+ * FocalLengthIn35mmFilm (1.5x on the 26 mm lens is written as 39 mm, with DigitalZoomRatio 1.5), so by default the
+ * tag is used as written. `applyZoom` multiplies by the ratio, for a phone that leaves the zoom out; he turns it on.
+ * (Plan 12.1 first said to always multiply; corrected at the T5.1 review.)
+ */
+export function effectiveF35(focal35: number, digitalZoom?: number, applyZoom = false): number {
+  return applyZoom && hasDigitalZoom(digitalZoom) ? focal35 * digitalZoom : focal35;
 }
 
 /** Focal length in pixels for an image of `width` x `height` px. */

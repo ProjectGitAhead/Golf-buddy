@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { readExif } from '../../core/exif';
 import { accuracyYards, distanceYards, validFix, type LatLon } from '../../core/geo';
 import {
-  clampFlagFt, DEFAULT_FLAG_FT, effectiveF35, FLAG_FT_MAX, FLAG_FT_MIN, LENSES, measure, spanPx, type Point,
+  clampFlagFt, DEFAULT_FLAG_FT, effectiveF35, FLAG_FT_MAX, hasDigitalZoom, FLAG_FT_MIN, LENSES, measure, spanPx, type Point,
 } from '../../core/rangefinder';
 import type { Course } from '../../core/types';
 import { findCourse } from '../../data/courses';
@@ -88,8 +88,8 @@ function DistanceSheet({ courseId, hole, onClose }: { courseId: string; hole: nu
 
 interface Pic {
   src: CanvasImageSource; w: number; h: number; release: () => void;
-  /** Effective 35 mm-equivalent focal length from EXIF (digital zoom folded in), when the photo carries it. */
-  f35?: number; lensMm?: number; zoom?: number;
+  /** FocalLengthIn35mmFilm as written in EXIF (phones usually include digital zoom in it), and DigitalZoomRatio. */
+  f35?: number; zoom?: number;
 }
 interface View { s: number; x0: number; y0: number }        // css px per image px; image point at the top-left corner
 type Which = 'top' | 'base';
@@ -147,6 +147,7 @@ function Rangefinder() {
   const [marks, setMarks] = useState<Partial<Record<Which, Point>>>({});
   const [lens, setLens] = useState<number | undefined>(lastLens);
   const [dragging, setDragging] = useState<Which | null>(null);
+  const [applyZoom, setApplyZoom] = useState(false);       // multiply by DigitalZoomRatio; off by default (see effectiveF35)
 
   const fileRef = useRef<HTMLInputElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -248,14 +249,14 @@ function Rangefinder() {
     input.value = '';                                   // drop the reference: the photo is not kept
     const my = ++seq.current;
     picRef.current?.release(); picRef.current = null;
-    setPic(null); setView(null); setMarks({}); setFail(null); setLoading(true);
+    setPic(null); setView(null); setMarks({}); setFail(null); setApplyZoom(false); setLoading(true);
     let exif = null;
     try { exif = readExif(await file.slice(0, 256 * 1024).arrayBuffer()); } catch { exif = null; }
     try {
       const d = await decodePhoto(file);
       if (my !== seq.current) { d.release(); return; }
       const p: Pic = { ...d };
-      if (exif?.focal35) { p.f35 = effectiveF35(exif.focal35, exif.digitalZoom); p.lensMm = exif.focal35; p.zoom = exif.digitalZoom; }
+      if (exif?.focal35) { p.f35 = exif.focal35; if (hasDigitalZoom(exif.digitalZoom)) p.zoom = exif.digitalZoom; }
       picRef.current = p;
       setPic(p);
     } catch {
@@ -383,7 +384,8 @@ function Rangefinder() {
   };
 
   // ----- the reading -----------------------------------------------------------------------------------------------
-  const f35 = pic?.f35 ?? lens;
+  const f35 = pic?.f35 ? effectiveF35(pic.f35, pic.zoom, applyZoom) : lens;
+  const zoomX = pic?.zoom ? +pic.zoom.toFixed(2) : 0;
   const both = !!(marks.top && marks.base);
   const result = pic && both && f35
     ? measure({ flagFt, f35, width: pic.w, height: pic.h, heightPx: spanPx(marks.top!, marks.base!) }) : null;
@@ -482,12 +484,25 @@ function Rangefinder() {
               </b>
             )}
           </div>
-          <p class="rf-basis" id="rf-lens" data-source={pic.f35 ? 'photo' : lens ? 'guess' : 'none'}>
+          <p class="rf-basis" id="rf-lens" data-source={pic.f35 ? (zoomX ? 'zoom' : 'photo') : lens ? 'guess' : 'none'}>
             {pic.f35
-              ? `Lens ${Math.round(pic.f35)} mm${pic.zoom && pic.zoom !== 1 ? ` (${pic.lensMm} mm x ${+pic.zoom.toFixed(2)} digital zoom)` : ''}, read from the photo`
+              ? zoomX
+                ? applyZoom
+                  ? `Approximate: lens ${Math.round(f35!)} mm (${pic.f35} mm from the photo x ${zoomX} zoom)`
+                  : `Approximate: lens ${pic.f35} mm as the photo states it, zoomed ${zoomX}x`
+                : `Lens ${pic.f35} mm, read from the photo`
               : lens ? `Approximate: lens guessed (${lensLabel}, ${lens} mm)` : 'Lens not known yet'}
             {` · ${flagFt} ft flagstick`}
           </p>
+          {zoomX > 0 && (
+            <div class="rf-zoomnote" id="rf-zoom-note">
+              <p>This photo was zoomed {zoomX}x. Most phones already count that in the lens figure. If the distance looks
+                too short, turn this on to apply the zoom.</p>
+              <button class="chip" id="rf-apply-zoom" aria-pressed={applyZoom} onClick={() => setApplyZoom(!applyZoom)}>
+                Apply {zoomX}x zoom: {applyZoom ? 'on' : 'off'}
+              </button>
+            </div>
+          )}
           <div class="rf-actions">
             <button class="btn btn-quiet" id="rf-reset" disabled={!marks.top} onClick={() => setMarks({})}>Mark again</button>
             <button class="btn btn-line" id="rf-photo" onClick={pick}><CameraGlyph />New photo</button>
