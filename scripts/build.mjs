@@ -6,7 +6,7 @@
 import { build } from 'esbuild';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -29,6 +29,28 @@ body{background:var(--bg);color:var(--text)}
 padding-block:16px}
 .gb-title{margin:0;font-size:1.5rem;color:var(--accent)}
 `;
+
+// The only addresses the app may contact (plan section 15.1): the two OpenStreetMap Overpass servers, tried in that
+// order from a tap in the hosted copy, and the attribution link shown beside map-based yardage.
+export const ALLOWED_URLS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://www.openstreetmap.org/copyright',
+];
+
+/** Every URL in a built file that is not allowed. The bundle writes "://" as ":\/\/" (see `bundle`), so both forms
+ *  are read. Besides ALLOWED_URLS, only text that is never fetched may appear: XML namespace names, and the course
+ *  research sources, which the Courses screen shows as plain text. */
+export function strayUrls(text) {
+  const sources = new Set();
+  const dir = join(root, 'src/data/courses');
+  for (const f of readdirSync(dir)) {
+    if (f.endsWith('.json')) for (const u of JSON.parse(readFileSync(join(dir, f), 'utf8')).sources ?? []) sources.add(u);
+  }
+  const found = text.replaceAll(':\\/\\/', '://').match(/https?:\/\/[^\s"'`<>\\)]+/gi) ?? [];
+  return [...new Set(found)].filter((u) => !ALLOWED_URLS.includes(u) && !sources.has(u)
+    && !/^http:\/\/www\.w3\.org\/(1998\/Math\/MathML|1999\/xhtml|2000\/svg|1999\/xlink|XML\/1998\/namespace)$/.test(u));
+}
 
 async function bundle() {
   const result = await build({
@@ -70,6 +92,8 @@ export async function buildAll() {
   const problems = [];
   if (/<!doctype|<html[\s>]|<head[\s>]|<body[\s>]/i.test(fragment)) problems.push('document tags in the fragment');
   if (/https?:\/\//i.test(fragment)) problems.push('a URL in the fragment');
+  const stray = strayUrls(fragment);
+  if (stray.length) problems.push(`addresses outside the allowed list: ${stray.join(', ')}`);
   if (/serviceWorker/.test(fragment)) problems.push('service worker code in the fragment');
   const bytes = Buffer.byteLength(fragment);
   if (bytes > MAX_BYTES) problems.push(`fragment is ${bytes} bytes (limit ${MAX_BYTES})`);
@@ -139,6 +163,8 @@ function buildSite(style, script) {
   writeFileSync(join(out, 'sw.js'), sw);
   for (const [name, text] of [['index.html', page], ['manifest.webmanifest', manifest], ['sw.js', sw]]) {
     if (/https?:\/\//i.test(text)) throw new Error(`Build refused: a URL in dist/site/${name}`);
+    const stray = strayUrls(text);
+    if (stray.length) throw new Error(`Build refused: addresses outside the allowed list in dist/site/${name}: ${stray.join(', ')}`);
   }
 }
 
