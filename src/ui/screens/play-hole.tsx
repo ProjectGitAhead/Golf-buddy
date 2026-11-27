@@ -5,6 +5,7 @@ import { findCourse } from '../../data/courses';
 import { useStore } from '../../store/use-store';
 import { Icon } from '../components/common';
 import { ApproachControl } from '../components/green-sheet';
+import { DistanceControl } from '../components/distance-sheet';
 import { formatToPar, holeFacts, scoreMark, scoreName, totals, type HoleFacts } from '../round';
 
 export function HoleEntry({ round, onFinish }: { round: Round; onFinish: () => void }) {
@@ -82,6 +83,7 @@ export function HoleEntry({ round, onFinish }: { round: Round; onFinish: () => v
               onClick={() => patch({ sand: f.score.sand ? undefined : true })}>{f.score.sand ? 'In sand' : 'No sand'}</button>
           </div>
         </div>
+        <DistanceControl courseId={round.courseId} hole={f.hole.number} />
         <div class="approach-slot">
           <MarkApproachSlot round={round} hole={f.hole.number} onSave={(approach) => patch({ approach })} />
         </div>

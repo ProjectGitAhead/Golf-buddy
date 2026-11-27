@@ -2,6 +2,7 @@
 
 export type Gender = 'M' | 'W';
 export interface Hole { number: number; par: number; strokeIndex: number; strokeIndexW?: number }
+export interface Hole { green?: { lat: number; lon: number } }  // T5.1: learned green, saved from "I'm at the pin"
 export interface Tee {
   id: string; name: string; gender: Gender;
   rating: number; slope: number; par: number;          // 18-hole values
@@ -40,3 +41,4 @@ export interface Round {
 export interface ImportedDifferential { id: string; date: string; differential: number; note?: string }
 export interface Profile { name?: string; gender: Gender; startingIndex?: number; homeCourseId?: string;
                            defaultTeeId?: string; updatedAt: string }
+export interface Profile { flagHeightFt?: number }  // T5.1: rangefinder flagstick height, ft
