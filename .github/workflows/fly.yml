@@ -1,0 +1,44 @@
+# Builds the hosted copy and deploys it to Fly.io. Plan section 14.
+# Owner setup: add the repository secret FLY_API_TOKEN (see README, "Hosted copy").
+name: Fly deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+env:
+  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+  FLY_ORG: ${{ vars.FLY_ORG || 'personal' }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the deploy token exists
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then echo "::error::Add the FLY_API_TOKEN repository secret (see README)"; exit 1; fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Create the app if it does not exist yet
+        run: |
+          APP=$(sed -n 's/^app = "\(.*\)"/\1/p' fly.toml)
+          if ! flyctl status --app "$APP" >/dev/null 2>&1; then
+            flyctl apps create "$APP" --org "$FLY_ORG"
+          fi
+      - run: flyctl deploy --remote-only --ha=false

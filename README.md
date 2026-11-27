@@ -24,17 +24,24 @@ The overseer publishes `dist/golf-buddy.html` as a private Claude Artifact with 
 
 ## Hosted copy
 
-The same app also runs as a web page at `https://projectgitahead.github.io/Golf-buddy/`, because a page inside
-Claude cannot use the phone's location. There, GPS distances work and the Distance sheet opens on GPS; the flag
-photo rangefinder works too, but reading a green or a scorecard from a photo needs Claude and is not available. Add it to the home screen from the browser's share menu;
-a small service worker (`scripts/site/sw.js`) lets it open with poor or no signal and fetches the newest version
-whenever the network answers. Scores in the hosted copy stay in that phone's browser and are not shared with the
-Claude version.
+The same app also runs as a web page, because a page inside Claude cannot use the phone's location. Fly.io is the
+host: `https://projectgitahead-golf-buddy.fly.dev/`. There, GPS distances work and the Distance sheet opens on GPS;
+the flag photo rangefinder works too, but reading a green or a scorecard from a photo needs Claude and is not
+available. Add it to the home screen from the browser's share menu; a small service worker (`scripts/site/sw.js`)
+lets it open with poor or no signal and fetches the newest version whenever the network answers. The hosted copy
+and the Claude artifact keep separate data: scores in the hosted copy stay in that phone's browser.
 
-- `npm run build` writes `dist/site/` (page, manifest, icons, `sw.js`) from `scripts/site/`. Every URL in it is
-  relative, so it works under the `/Golf-buddy/` sub-path; `npm run preview` serves it at `/Golf-buddy/`.
-- `.github/workflows/pages.yml` runs on every push to `main` (or by hand): `npm ci`, typecheck, tests, build, then
-  deploys `dist/site/` to GitHub Pages. One-time setup: repo Settings > Pages > Source: GitHub Actions.
+Owner's three steps (once):
+
+1. Create a Fly deploy token (`fly tokens create org`, or the Fly dashboard > Tokens).
+2. Add it as the GitHub repo secret `FLY_API_TOKEN` (Settings > Secrets and variables > Actions).
+3. Merge to `main`. `.github/workflows/fly.yml` then builds, creates the app if needed and deploys.
+
+- `npm run build` writes `dist/site/` (page, manifest, icons, `sw.js`) from `scripts/site/`. The `Dockerfile` serves
+  it with nginx on port 8080 (`deploy/nginx.conf`); `fly.toml` holds the Fly settings (one small machine that stops
+  when idle). Without the secret the workflow stops at its first step with a plain message.
+- GitHub Pages is still available: turn on Pages (repo Settings > Pages > Source: GitHub Actions), then run the
+  Pages workflow (`.github/workflows/pages.yml`) by hand from the Actions tab. It no longer runs on push.
 
 ## Where things live
 

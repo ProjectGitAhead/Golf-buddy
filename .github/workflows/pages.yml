@@ -1,10 +1,9 @@
 # Builds the hosted copy (dist/site/) and publishes it to GitHub Pages. Plan section 13.
+# Manual only: Fly.io is the host now (plan section 14). Run by hand after turning Pages on.
 # One-time setup by the owner: repo Settings > Pages > Source: GitHub Actions.
 name: Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
