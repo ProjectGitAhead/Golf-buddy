@@ -1,13 +1,16 @@
 // Courses tab: list, detail (tees, ratings, hole table) and the hand editor.
-import { useState } from 'preact/hooks';
+import { useRef, useState } from 'preact/hooks';
 import type { Course } from '../../core/types';
 import { allCourses, findCourse, isBundledCourse } from '../../data/courses';
 import { useStore } from '../../store/use-store';
 import { Confirm, Icon } from '../components/common';
 import { teeYards } from '../round';
-import { CourseEditor } from './courses-editor';
+import { downscalePhoto } from '../../vision/photo';
+import { readScorecard, scanFailureLine, type SampleFn, type ScanResult } from '../../vision/scorecard';
+import { CourseEditor, type CourseForm } from './courses-editor';
 
-type View = { name: 'list' } | { name: 'detail'; id: string } | { name: 'edit'; id: string | null };
+type View = { name: 'list' } | { name: 'detail'; id: string }
+  | { name: 'edit'; id: string | null; draft?: CourseForm; flags?: Record<string, string>; notice?: string };
 
 export function Courses({ onPlay }: { onPlay: (courseId: string) => void }) {
   const store = useStore();
@@ -18,7 +21,7 @@ export function Courses({ onPlay }: { onPlay: (courseId: string) => void }) {
   if (view.name === 'edit') {
     const existing = view.id ? findCourse(view.id, store.data.courses) : undefined;
     return (
-      <CourseEditor course={existing}
+      <CourseEditor course={existing} draft={view.draft} flags={view.flags} notice={view.notice}
         onCancel={() => show(view.id ? { name: 'detail', id: view.id } : { name: 'list' })}
         onSaved={(c) => { store.saveCourse(c); show({ name: 'detail', id: c.id }); }} />
     );
@@ -51,19 +54,120 @@ export function Courses({ onPlay }: { onPlay: (courseId: string) => void }) {
         ))}
       </ul>
       <div class="stack" style="margin-top:14px">
+        <ScanScorecardSlot
+          onScanned={(r) => show({ name: 'edit', id: null, draft: r.form, flags: r.flags })}
+          onFailed={(notice) => show({ name: 'edit', id: null, notice })} />
         <button class="btn btn-line btn-block" id="add-course" onClick={() => show({ name: 'edit', id: null })}>Add a course by hand</button>
-        <ScanScorecardSlot onScanned={(draft) => { void draft; }} />
       </div>
     </div>
   );
 }
 
+type ClaudeWindow = { claude?: { use?: (name: string) => Promise<unknown> } };
+type ScanState =
+  | { step: 'idle' } | { step: 'opening' }
+  | { step: 'photos'; sample: SampleFn; maxCount: number; maxBytes: number; types: string[]; photos: File[]; problem?: string }
+  | { step: 'reading'; writing: boolean };
+
 /**
- * T3.2 slot: "Scan a scorecard" (plan section 9) renders here and opens the editor pre-filled with the scanned
- * draft. Until then it renders nothing, so the list shows no control that does nothing.
+ * "Scan a scorecard" (plan section 9): one or two photos of the card go to Claude through the `sample` capability;
+ * the answer opens in the course editor marked "Check against the card". The photos stay in memory only.
  */
-function ScanScorecardSlot(_props: { onScanned: (draft: Course) => void }) {
-  return null;
+function ScanScorecardSlot({ onScanned, onFailed }: { onScanned: (r: ScanResult) => void; onFailed: (line: string) => void }) {
+  const [st, setSt] = useState<ScanState>({ step: 'idle' });
+  const ctl = useRef<AbortController | null>(null);
+
+  const open = async () => {
+    setSt({ step: 'opening' });
+    let sample: SampleFn | null = null;
+    try { sample = (await (globalThis as unknown as ClaudeWindow).claude?.use?.('sample')) as SampleFn | null; } catch { sample = null; }
+    if (!sample) { setSt({ step: 'idle' }); onFailed(scanFailureLine('unavailable')); return; }
+    const images = (await sample.limits().catch(() => null))?.images;
+    if (!images || images.maxCount < 1) { setSt({ step: 'idle' }); onFailed(scanFailureLine('images_unavailable')); return; }
+    setSt({ step: 'photos', sample, maxCount: Math.min(images.maxCount, 2), maxBytes: images.maxInputBytes,
+      types: images.mediaTypes, photos: [] });
+  };
+
+  const add = (e: Event) => {
+    const input = e.target as HTMLInputElement;
+    const picked = Array.from(input.files ?? []);
+    input.value = '';
+    if (st.step !== 'photos' || !picked.length) return;
+    const photos = [...st.photos, ...picked].slice(0, st.maxCount);
+    const dropped = st.photos.length + picked.length - photos.length;
+    setSt({ ...st, photos, problem: dropped > 0 ? `Only ${st.maxCount} ${st.maxCount === 1 ? 'photo' : 'photos'} can be read at once.` : undefined });
+  };
+
+  const read = async () => {
+    if (st.step !== 'photos' || !st.photos.length) return;
+    const { sample, maxBytes, types } = st;
+    const c = new AbortController();
+    ctl.current = c;
+    setSt({ step: 'reading', writing: false });
+    const blobs = await Promise.all(st.photos.map((p) => downscalePhoto(p, 1600, 0.88)));
+    if (blobs.some((b) => b.size > maxBytes || (types.length > 0 && !types.includes(b.type)))) {
+      setSt({ step: 'idle' }); onFailed(scanFailureLine('image_rejected')); return;
+    }
+    try {
+      const result = await readScorecard(sample, blobs, { signal: c.signal, onText: () => setSt({ step: 'reading', writing: true }) });
+      setSt({ step: 'idle' });
+      onScanned(result);
+    } catch (e) {
+      const code = (e as { code?: string } | null)?.code;
+      setSt({ step: 'idle' });
+      if (code !== 'cancelled') onFailed(scanFailureLine(code));
+    } finally {
+      ctl.current = null;
+    }
+  };
+
+  if (st.step === 'idle' || st.step === 'opening') {
+    return (
+      <button class="btn btn-primary btn-block" id="scan-card" disabled={st.step === 'opening'} onClick={() => void open()}>
+        {st.step === 'opening' ? 'Opening the scanner…' : 'Scan a scorecard'}</button>
+    );
+  }
+  if (st.step === 'reading') {
+    return (
+      <div class="scan-panel" id="scan-panel" aria-busy="true">
+        <p class="scan-status" id="scan-status" role="status">
+          {st.writing ? 'Writing down the numbers…' : 'Reading the card. This can take up to a minute.'}</p>
+        <button class="btn btn-quiet btn-block" id="scan-stop" onClick={() => ctl.current?.abort()}>Stop</button>
+      </div>
+    );
+  }
+  const room = st.maxCount - st.photos.length;
+  return (
+    <div class="scan-panel" id="scan-panel">
+      <h2 class="scan-title">Scan a scorecard</h2>
+      <p class="scan-help">Lay the card flat in good light with every row in the frame.
+        {st.maxCount > 1 ? ' If the ratings or handicap rows are on the back, add a second photo of the back.' : ''}</p>
+      {st.photos.length > 0 && (
+        <ul class="scan-photos" id="scan-photos">
+          {st.photos.map((p, i) => (
+            <li>
+              <span>Photo {i + 1} <span class="muted">· {(p.size / 1048576).toFixed(1)} MB</span></span>
+              <button class="btn-text danger" id={`scan-photo-remove-${i}`}
+                onClick={() => setSt({ ...st, photos: st.photos.filter((_, j) => j !== i), problem: undefined })}>Remove</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {st.problem && <p class="error" id="scan-problem">{st.problem}</p>}
+      {room > 0 && (
+        <div class="btn-row">
+          <label class="btn btn-line scan-pick" for="scan-photo-take">{st.photos.length ? 'Take another' : 'Take a photo'}</label>
+          <label class="btn btn-line scan-pick" for="scan-photo-choose">Choose a photo</label>
+          <input class="sr" type="file" id="scan-photo-take" accept="image/*" capture="environment" onChange={add} />
+          <input class="sr" type="file" id="scan-photo-choose" accept={st.types.join(',') || 'image/*'} multiple={room > 1} onChange={add} />
+        </div>
+      )}
+      <div class="btn-row">
+        <button class="btn btn-quiet" id="scan-cancel" onClick={() => setSt({ step: 'idle' })}>Cancel</button>
+        <button class="btn btn-primary" id="scan-read" disabled={!st.photos.length} onClick={() => void read()}>Read the card</button>
+      </div>
+    </div>
+  );
 }
 
 function CourseDetail({ course, onBack, onEdit, onPlay, onRemoved }: {
