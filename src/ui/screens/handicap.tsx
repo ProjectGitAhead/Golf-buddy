@@ -2,13 +2,14 @@
 // detail (reopen to edit, delete), "Add past score", the starting index, and how it is all calculated.
 // Every number comes from `computeHistory`; nothing here recalculates handicap maths.
 import { useState } from 'preact/hooks';
-import { computeHistory, differentialsToUse, type HandicapHistory, type HistoryEntry } from '../../core/handicap';
+import { computeHistory, type HandicapHistory, type HistoryEntry } from '../../core/handicap';
 import type { Round } from '../../core/types';
 import { findCourse } from '../../data/courses';
 import { useStore } from '../../store/use-store';
 import { Confirm, Icon, Scorecard } from '../components/common';
 import { activeRound, formatDate, formatIndex, formatSigned, HOLES_LABEL, holeFacts, newId, todayISO } from '../round';
 import { parseIndex } from './play-start';
+import { indexNote } from '../components/index-note';
 
 type View = { name: 'list' } | { name: 'round'; id: string } | { name: 'import'; id: string };
 
@@ -45,20 +46,7 @@ export function Handicap({ onEditRound }: { onEditRound: () => void }) {
 // ----- index ----------------------------------------------------------------------------------------------------
 
 function IndexCard({ hist }: { hist: HandicapHistory }) {
-  const scores = hist.entries.length;
-  const recent = Math.min(scores, 20);
-  const rule = differentialsToUse(scores);
-  let note: string;
-  if (hist.indexSource === 'calculated' && rule) {
-    const adj = rule.adjustment ? `, minus ${Math.abs(rule.adjustment).toFixed(1)} (the adjustment for ${recent} scores)` : '';
-    note = rule.use === 1
-      ? `Your best differential of ${recent}${adj}.`
-      : `The average of your best ${rule.use} differentials of your ${recent} most recent${adj}.`;
-  } else if (hist.indexSource === 'starting') {
-    note = `The index you entered, used until you have 3 scores. You have ${scores}.`;
-  } else {
-    note = `A calculated index needs 3 scores. You have ${scores}.`;
-  }
+  const note = indexNote(hist);
   return (
     <div class="card idx-card" id="index-card">
       <div class="idx-top">

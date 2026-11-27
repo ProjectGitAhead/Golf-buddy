@@ -117,6 +117,9 @@ export default async function ({ browser, baseURL }) {
     await page.click('#past-cancel');
 
     // Screens for review: list and round detail, light.
+    eq(await text(page, '#handicap-index-note'),
+      `Your best differential of your 4 scores, ${h.entries.find((e) => e.counting).adjustedDifferential.toFixed(1)}, minus 1.0 (the adjustment for 4 scores).`,
+      '4-score index wording');
     await page.evaluate(() => document.getElementById('main').scrollTo({ top: 0 }));
     assert(await page.isVisible('#index-trend'), 'trend sparkline from 2 calculated indexes');
     await page.screenshot({ path: `${SHOTS}/handicap-light.png`, fullPage: false });
