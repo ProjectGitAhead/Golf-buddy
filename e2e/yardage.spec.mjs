@@ -428,6 +428,52 @@ async function bundledGreens(browser, baseURL) {
   } finally { await context.close(); }
 }
 
+/**
+ * Hazard rows expected from `player` towards the middle of `ring`, worked out by sampling: a 0.5 m grid over the 40 m
+ * corridor ahead of the player, out to the back of the green; each grid point inside a hazard counts. Reach = the
+ * nearest such point along the line (0 when he stands in the hazard), carry = the farthest; side from the points'
+ * offsets. Nearest first, at most three. (The app clips polygons instead; this does not share that code.)
+ */
+function expectedHazards(player, ring, hazards) {
+  const o = { lat: player.latitude, lon: player.longitude };
+  const c = centroidXY(o, ring), len = Math.hypot(c.x, c.y), u = { x: c.x / len, y: c.y / len };
+  const back = expected(player, ring).back * 0.9144;
+  const inside = (pt, poly) => {
+    let inn = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const A = poly[i], B = poly[j];
+      if ((A.y > pt.y) !== (B.y > pt.y) && pt.x < A.x + ((pt.y - A.y) * (B.x - A.x)) / (B.y - A.y)) inn = !inn;
+    }
+    return inn;
+  };
+  const rows = [];
+  for (const h of hazards) {
+    const poly = h.shape.map(([lat, lon]) => xy(o, { lat, lon }));
+    let reach = Infinity, carry = -Infinity, lo = Infinity, hi = -Infinity;
+    for (let a = 0; a <= back + 60; a += 0.5) {
+      for (let cc = -20; cc <= 20; cc += 0.5) {
+        if (!inside({ x: a * u.x - cc * u.y, y: a * u.y + cc * u.x }, poly)) continue;
+        reach = Math.min(reach, a); carry = Math.max(carry, a); lo = Math.min(lo, cc); hi = Math.max(hi, cc);
+      }
+    }
+    if (!Number.isFinite(reach) || reach > back) continue;
+    if (inside({ x: 0, y: 0 }, poly)) reach = 0;
+    const side = lo <= 0 && hi >= 0 ? 'in line' : lo > 0 ? 'left' : 'right';
+    rows.push({ line: `${h.kind === 'water' ? 'Water' : 'Bunker'} ${side}: ${Math.round(toYd(reach))} to reach, ${Math.round(toYd(carry))} to carry`, reach, carry });
+  }
+  return rows.sort((a, b) => a.reach - b.reach || a.carry - b.carry).slice(0, 3);
+}
+/** The hazard rows on screen against `want` (count, order, kind and side exact; yards within 2; reach < carry). */
+async function hazardRowsNear(page, want, what) {
+  const got = await page.locator('#yardage-hazards li').allTextContents();
+  eq(got.length, want.length, `${what}: hazard rows (${got.join(' | ')}; expected ${want.map((w) => w.line).join(' | ')})`);
+  for (const [i, w] of want.entries()) {
+    const g = (got[i].match(/\d+/g) ?? []).map(Number), e = (w.line.match(/\d+/g) ?? []).map(Number);
+    assert(got[i].replace(/\d+/g, '#') === w.line.replace(/\d+/g, '#') && g.every((v, k) => Math.abs(v - e[k]) <= 2) && g[0] < g[1],
+      `${what}: row ${i + 1} reads "${got[i]}", expected "${w.line}" (within 2 yd)`);
+  }
+}
+
 async function shippedRancho(browser, baseURL) {
   // The hosted copy as built, with the real greens file committed for Rancho Solano: live yardage on hole 10 with no
   // lookup step and no network call. G10 is hole 10's green centre in that file.
@@ -445,6 +491,7 @@ async function shippedRancho(browser, baseURL) {
     const atPin = Number(await text(page, '#yardage-centre'));
     assert(atPin >= 0 && atPin <= 1, `hole 10 middle at the green centre: ${atPin} yd`);
     assert((await text(page, '#yardage-osm')).includes('Green positions © OpenStreetMap contributors'), 'attribution shown');
+    eq(await page.locator('#yardage-hazards').count(), 0, 'standing on the green: no hazard rows');
     // About 150 yd short of the green, due south.
     const P = { latitude: G10.latitude - 150 * 0.9144 / (R * Math.PI / 180), longitude: G10.longitude };
     const want = toYd(haversine(P, G10));
@@ -457,7 +504,22 @@ async function shippedRancho(browser, baseURL) {
     let w = expected(P, RING10);
     await near(page, '#yardage-front', w.front, 'hole 10 front from 150 yd south');
     await near(page, '#yardage-back', w.back, 'hole 10 back from 150 yd south');
-    eq(await page.locator('#yardage-hazards').count(), 0, 'no hazards in the shipped file: no hazard rows');
+    // Hazards from the shipped file (hole 10 has water and bunkers), checked against the independent sampling.
+    const HZ10 = shipped.holes['10'].hazards;
+    assert(HZ10?.length > 0, 'the shipped file has hazards on hole 10');
+    await hazardRowsNear(page, expectedHazards(P, RING10, HZ10), 'hole 10 from 150 yd south');
+    // On the tee side: 260 yd from the green towards the middle of hole 10's hazards (they lie along its line).
+    const mid = HZ10.flatMap((z) => z.shape).reduce((a, [lat, lon], _i, all) => ({ lat: a.lat + lat / all.length, lon: a.lon + lon / all.length }), { lat: 0, lon: 0 });
+    const dir = xy({ lat: G10.latitude, lon: G10.longitude }, mid), dl = Math.hypot(dir.x, dir.y);
+    const T = { latitude: G10.latitude + (260 * 0.9144 * dir.y / dl) / (R * Math.PI / 180),
+      longitude: G10.longitude + (260 * 0.9144 * dir.x / dl) / (R * Math.PI / 180 * Math.cos(G10.latitude * Math.PI / 180)) };
+    const wantT = expectedHazards(T, RING10, HZ10);
+    assert(wantT.length > 0, 'hazards in play from the tee side');
+    await context.setGeolocation({ ...T, accuracy: 4 });
+    await page.waitForFunction((n) => document.querySelectorAll('#yardage-hazards li').length === n, wantT.length, { timeout: 4000 }).catch(() => {});
+    await near(page, '#yardage-centre', expected(T, RING10).centre, 'hole 10 middle from the tee side');
+    await hazardRowsNear(page, wantT, 'hole 10 from the tee side');
+    await shot(page, 'shipped-hazards', false);
     // 150 yd due east, beside the green: front and back are its depth on that line.
     const E = { latitude: G10.latitude, longitude: G10.longitude + 150 * 0.9144 / (R * Math.PI / 180 * Math.cos(G10.latitude * Math.PI / 180)) };
     await context.setGeolocation({ ...E, accuracy: 4 });

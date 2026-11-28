@@ -20,6 +20,7 @@
 //   data/users/<id>/golf/imports/<id>
 
 import type { Course, HoleScore, ImportedDifferential, Profile, Round } from '../core/types';
+import { cleanRound } from '../core/snapshot';
 
 export type Kind = 'profile' | 'rounds' | 'courses' | 'imports';
 export const KINDS: Kind[] = ['profile', 'rounds', 'courses', 'imports'];
@@ -121,6 +122,16 @@ export function mergeRound(a: Round, b: Round): Round {
   return { ...base, scores, updatedAt: newer(a.updatedAt, b.updatedAt) ? a.updatedAt : b.updatedAt };
 }
 
+/** Every round with its snapshot trimmed to the scoring fields (see core/snapshot.ts). */
+function cleanRounds(rounds: Record<string, Round>): Record<string, Round> {
+  let out: Record<string, Round> | null = null;
+  for (const [id, r] of Object.entries(rounds)) {
+    const c = cleanRound(r);
+    if (c !== r) { out ??= { ...rounds }; out[id] = c; }
+  }
+  return out ?? rounds;
+}
+
 function isValidDoc(kind: Kind, body: unknown): body is Stamped {
   if (!body || typeof body !== 'object') return false;
   const o = body as Record<string, unknown>;
@@ -161,7 +172,7 @@ export interface MergeResult<T> {
  * or remote, the newer of the two) beats any copy not changed after it; a copy changed after it wins.
  */
 export function mergeDocs<T extends Stamped>(local: Record<string, T>, remote: Record<string, T>,
-  tombstones: Tombs, remoteTombs: Tombs = {}, combine?: (a: T, b: T) => T): MergeResult<T> {
+  tombstones: Tombs, remoteTombs: Tombs = {}, combine?: (a: T, b: T) => T, normalize?: (d: T) => T): MergeResult<T> {
   const merged: Record<string, T> = {};
   const push: string[] = [];
   const remove: string[] = [];
@@ -174,7 +185,10 @@ export function mergeDocs<T extends Stamped>(local: Record<string, T>, remote: R
     const lt = tombstones[id];
     const rt = remoteTombs[id];
     const t = newer(lt, rt) ? lt : rt;
-    const live = l && r ? (combine ? combine(l, r) : pickNewer(l, r)) : l ?? r;
+    const picked = l && r ? (combine ? combine(l, r) : pickNewer(l, r)) : l ?? r;
+    // `normalize` (rounds: geometry off the snapshot) is not an edit: the stamp stays, and a remote copy that differs
+    // only by it is pushed again in its clean form.
+    const live = picked && normalize ? normalize(picked) : picked;
     if (t && (!live || !newer(live.updatedAt, t))) {
       tombs[id] = t;
       if (rt !== t) remove.push(id);
@@ -238,7 +252,12 @@ export class Store {
     this.key = opts.storageKey ?? STORAGE_KEY;
     this.writeDelay = opts.writeDelayMs ?? 600;
     this.loadTimeout = opts.loadTimeoutMs ?? 10_000;
-    this.state = this.read() ?? { data: emptyData(), tombstones: {} };
+    const stored = this.read();
+    this.state = stored ?? { data: emptyData(), tombstones: {} };
+    // Rounds saved before snapshots were trimmed (read() cleans them): write the clean copies back once.
+    if (stored && this.storage) {
+      try { if (this.storage.getItem(this.key) !== canon(this.state)) this.persist(); } catch { /* storage gone */ }
+    }
   }
 
   // ----- reading ------------------------------------------------------------------------------------------------
@@ -408,7 +427,8 @@ export class Store {
     const local = ids ? pick(allLocal, ids) : allLocal;
     const tombs = ids ? pick(allTombs, ids) : allTombs;
     const m = mergeDocs(local, remote, tombs, remoteTombs,
-      kind === 'rounds' ? (mergeRound as unknown as (a: Stamped, b: Stamped) => Stamped) : undefined);
+      kind === 'rounds' ? (mergeRound as unknown as (a: Stamped, b: Stamped) => Stamped) : undefined,
+      kind === 'rounds' ? (cleanRound as unknown as (d: Stamped) => Stamped) : undefined);
     let docs = m.merged;
     let kindTombs = m.tombstones;
     if (ids) {
@@ -535,7 +555,7 @@ export class Store {
         const p = JSON.parse(raw) as Partial<Persisted>;
         const d = p.data ?? emptyData();
         return {
-          data: { profile: d.profile ?? null, rounds: d.rounds ?? {}, courses: d.courses ?? {}, imports: d.imports ?? {} },
+          data: { profile: d.profile ?? null, rounds: cleanRounds(d.rounds ?? {}), courses: d.courses ?? {}, imports: d.imports ?? {} },
           tombstones: p.tombstones ?? {},
         };
       }

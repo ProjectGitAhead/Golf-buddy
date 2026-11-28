@@ -54,12 +54,14 @@ async function run() {
     for (const d of ['body', 'proxy', 'fcgi', 'uwsgi', 'scgi', 'cache', 'html']) mkdirSync(join(dir, d));
     const text = readFileSync(CONF, 'utf8');
 
-    // 1. The file as it ships. Only the cache folder moves (no write access to /var/cache needed), and the IPv6
-    //    listen goes when this machine has no IPv6 (`nginx -t` opens the sockets).
-    const v6 = spawnSync(process.execPath, ['-e', "require('net').createServer().listen(0,'::1').on('listening',function(){this.close()}).on('error',()=>process.exit(1))"]).status === 0;
-    if (!v6) console.log('(no IPv6 here: the [::]:8080 listen line is left out of the test)');
-    writeFileSync(join(dir, 'as-shipped.conf'), text.replace('/var/cache/nginx/osm', `${dir}/cache`)
-      .replace(v6 ? '\0' : 'listen [::]:8080;', ''));
+    // 1. The file as it ships, tested the way the Dockerfile does: a copy without the IPv6 listen line (`nginx -t`
+    //    opens the sockets, and a build machine may have no IPv6). Only the cache folder also moves here, so the test
+    //    needs no write access to /var/cache.
+    const docker = readFileSync(join(root, 'Dockerfile'), 'utf8');
+    check(/sed '\/listen \\\[::\\\]:8080;\/d'/.test(docker) && /nginx -t -c \/tmp\/nginx-test\.conf/.test(docker),
+      'the Dockerfile tests the same IPv4-only copy');
+    check(text.includes('listen 8080;') && text.includes('listen [::]:8080;'), 'the shipped file keeps both listen lines');
+    writeFileSync(join(dir, 'as-shipped.conf'), text.replace('/var/cache/nginx/osm', `${dir}/cache`).replace('listen [::]:8080;', ''));
     writeFileSync(join(dir, 'test.conf'), main(dir, join(dir, 'as-shipped.conf')));
     const t = spawnSync('nginx', ['-t', '-q', '-p', dir, '-c', join(dir, 'test.conf')], { encoding: 'utf8' });
     check(t.status === 0, `nginx -t on deploy/nginx.conf${t.status === 0 ? '' : `: ${t.stderr.trim()}`}`);
