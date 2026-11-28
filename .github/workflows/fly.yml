@@ -6,6 +6,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy to Fly after building
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -87,8 +92,19 @@ jobs:
             echo "Push failed, green positions were not saved (the deploy continues)"
           fi
       - run: npm run build
+      - name: Check green positions are available
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
+        run: |
+          F=src/data/courses/rancho-solano.greens.json
+          N=$(node -e 'try{console.log(Object.keys(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).holes||{}).length)}catch(e){console.log(0)}' "$F")
+          if [ "$N" -eq 0 ]; then
+            echo "::error::No green positions are available for Rancho Solano (the map lookup failed and none are saved in the repository). Not deploying, so the live site keeps its current data."
+            exit 1
+          fi
       - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
       - name: Create the app if it does not exist yet
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         run: |
           APP=$(sed -n 's/^app = "\(.*\)"/\1/p' fly.toml)
           case "$FLY_API_TOKEN" in
@@ -118,3 +134,4 @@ jobs:
           echo "::error::Could not find or create the Fly app $APP (lookup HTTP $GET_CODE, create HTTP $POST_CODE). If the token is valid, set the repository variable FLY_ORG to your Fly organisation's slug (shown in the Fly dashboard URL). See README, Hosted copy."
           exit 1
       - run: flyctl deploy --remote-only --ha=false
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
