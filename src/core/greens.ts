@@ -1,7 +1,10 @@
-// Green positions from OpenStreetMap (plan section 15.1) and front / centre / back yardage (15.2). Pure functions on
-// the JSON an Overpass `out tags geom` query returns; no DOM, no network.
+// Green positions from OpenStreetMap (plan section 15.1), the bunkers and water around each hole (16.1), and the old
+// nearest / farthest yardage kept as the fallback of src/core/line-of-play.ts. Pure functions on the JSON an Overpass
+// `out tags geom` query returns; no DOM, no network.
 import { haversineM, metresToYards, type LatLon } from './geo';
 import type { Course, Hole } from './types';
+
+export type Hazard = NonNullable<Hole['hazards']>[number];
 
 /** One element of an Overpass `out tags geom` answer (only the parts used here). */
 export interface OsmElement {
@@ -12,8 +15,9 @@ export interface OsmElement {
   members?: { type: string; ref: number; role: string; geometry?: (LatLon | null)[] }[];
 }
 
-/** A green found for a hole: centre (polygon centroid) and outline as [lat, lon] pairs, at most 40 points. */
-export interface FoundGreen { centre: LatLon; outline: [number, number][] }
+/** A green found for a hole: centre (polygon centroid) and outline as [lat, lon] pairs, at most 40 points; and the
+ *  bunkers and water near the hole's line (outlines of at most 30 points), when any are mapped. */
+export interface FoundGreen { centre: LatLon; outline: [number, number][]; hazards?: Hazard[] }
 
 export interface GreensResult {
   greens: Map<number, FoundGreen>;   // by hole number
@@ -23,6 +27,9 @@ export interface GreensResult {
 /** A green farther than this from the end of its hole line is not that hole's green. */
 export const MATCH_MAX_M = 60;
 export const OUTLINE_MAX_POINTS = 40;
+/** A hazard belongs to every hole whose golf=hole line passes within this distance of it. */
+export const HAZARD_NEAR_M = 45;
+export const HAZARD_MAX_POINTS = 30;
 
 // ----- small planar helpers (local equirectangular projection; fine over a few hundred metres) -------------------
 
@@ -88,18 +95,39 @@ export function assembleRings(parts: LatLon[][]): LatLon[][] {
   return rings;
 }
 
+/** The outlines of a way or a relation (its outer rings), each as an open ring of at least 3 points. */
+function ringsOf(e: OsmElement): LatLon[][] {
+  const rings = e.type === 'way' ? [clean(e.geometry)]
+    : e.type === 'relation' ? assembleRings((e.members ?? []).filter((m) => m.type === 'way' && m.role !== 'inner').map((m) => clean(m.geometry)))
+      : [];
+  const out: LatLon[][] = [];
+  for (const r of rings) {
+    const ring = r.length > 1 && same(r[0], r[r.length - 1]) ? r.slice(0, -1) : r;
+    if (ring.length >= 3) out.push(ring);
+  }
+  return out;
+}
+
 /** Every golf=green outline in the answer (ways, and the outer rings of relations), each as an open ring. */
 export function greenPolygons(elements: OsmElement[]): LatLon[][] {
-  const out: LatLon[][] = [];
+  return elements.filter((e) => e.tags?.golf === 'green').flatMap(ringsOf);
+}
+
+/** What kind of hazard an element is: golf=bunker is a bunker; natural=water, golf=water_hazard and
+ *  golf=lateral_water_hazard are water. Anything else is not a hazard. */
+export function hazardKind(tags: Record<string, string> | undefined): Hazard['kind'] | null {
+  if (!tags) return null;
+  if (tags.golf === 'bunker') return 'bunker';
+  if (tags.natural === 'water' || tags.golf === 'water_hazard' || tags.golf === 'lateral_water_hazard') return 'water';
+  return null;
+}
+
+/** Every bunker and water outline in the answer. */
+export function hazardPolygons(elements: OsmElement[]): { kind: Hazard['kind']; ring: LatLon[] }[] {
+  const out: { kind: Hazard['kind']; ring: LatLon[] }[] = [];
   for (const e of elements) {
-    if (e.tags?.golf !== 'green') continue;
-    const rings = e.type === 'way' ? [clean(e.geometry)]
-      : e.type === 'relation' ? assembleRings((e.members ?? []).filter((m) => m.type === 'way' && m.role !== 'inner').map((m) => clean(m.geometry)))
-        : [];
-    for (const r of rings) {
-      const ring = r.length > 1 && same(r[0], r[r.length - 1]) ? r.slice(0, -1) : r;
-      if (ring.length >= 3) out.push(ring);
-    }
+    const kind = hazardKind(e.tags);
+    if (kind) for (const ring of ringsOf(e)) out.push({ kind, ring });
   }
   return out;
 }
@@ -158,9 +186,33 @@ export function distanceToRingM(p: LatLon, ring: LatLon[]): number {
   return best;
 }
 
+function segmentsCross(a: XY, b: XY, c: XY, d: XY): boolean {
+  const cr = (p: XY, q: XY, r: XY) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+  const d1 = cr(c, d, a), d2 = cr(c, d, b), d3 = cr(a, b, c), d4 = cr(a, b, d);
+  return ((d1 > 0) !== (d2 > 0)) && ((d3 > 0) !== (d4 > 0));
+}
+
+/** Metres from a line (a hole's path) to a ring: 0 where the line enters it, else the closest approach. */
+export function distanceLineToRingM(line: LatLon[], ring: LatLon[]): number {
+  const pr = projector(line[0]);
+  const l = line.map(pr.to), r = ring.map(pr.to);
+  if (l.some((p) => pointInRing(p, r))) return 0;
+  let best = Infinity;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+    for (let k = 0; k < l.length; k++) {
+      best = Math.min(best, dist(l[k], closestOnSegment(l[k], r[j], r[i])));
+      if (k + 1 < l.length) {
+        if (segmentsCross(l[k], l[k + 1], r[j], r[i])) return 0;
+        best = Math.min(best, dist(r[i], closestOnSegment(r[i], l[k], l[k + 1])));
+      }
+    }
+  }
+  return best;
+}
+
 // ----- holes -----------------------------------------------------------------------------------------------------
 
-interface HoleLine { ref: number; tee: LatLon; end: LatLon }
+interface HoleLine { ref: number; tee: LatLon; end: LatLon; path: LatLon[] }
 
 /** golf=hole ways with a whole-number `ref` from 1 to 18 ("7" and "07" both mean hole 7; "7A" or "East 7" are ignored). */
 export function holeLines(elements: OsmElement[]): HoleLine[] {
@@ -172,7 +224,7 @@ export function holeLines(elements: OsmElement[]): HoleLine[] {
     const n = Number(ref);
     const g = clean(e.geometry);
     if (n < 1 || n > 18 || g.length < 2) continue;
-    out.push({ ref: n, tee: g[0], end: g[g.length - 1] });
+    out.push({ ref: n, tee: g[0], end: g[g.length - 1], path: g });
   }
   return out;
 }
@@ -207,13 +259,16 @@ export function pickHoleSet(lines: HoleLine[], player: LatLon): Map<number, Hole
 }
 
 const round6 = (x: number) => Math.round(x * 1e6) / 1e6;
+const roundPoint = (p: LatLon) => [round6(p.lat), round6(p.lon)] as [number, number];
 
 /**
  * The green for each hole: the golf=green polygon that contains the last point of the hole line, else the nearest one
- * within 60 m. `holes` are the hole numbers asked for (the course's holes); any without a green are `missing`.
+ * within 60 m. `holes` are the hole numbers asked for (the course's holes); any without a green are `missing`. Each
+ * green found carries the bunkers and water within 45 m of its hole's line (one hazard may go to two holes).
  */
 export function matchGreens(elements: OsmElement[], player: LatLon, holes: number[] = range18()): GreensResult {
   const polys = greenPolygons(elements);
+  const hz = hazardPolygons(elements);
   const set = pickHoleSet(holeLines(elements), player);
   const greens = new Map<number, FoundGreen>();
   for (const [n, line] of set) {
@@ -225,9 +280,12 @@ export function matchGreens(elements: OsmElement[], player: LatLon, holes: numbe
     }
     if (!best || bestD > MATCH_MAX_M) continue;
     const c = centroid(best);
+    const hazards = hz.filter((h) => distanceLineToRingM(line.path, h.ring) <= HAZARD_NEAR_M)
+      .map((h) => ({ kind: h.kind, shape: simplifyRing(h.ring, HAZARD_MAX_POINTS).map(roundPoint) }));
     greens.set(n, {
       centre: { lat: round6(c.lat), lon: round6(c.lon) },
-      outline: simplifyRing(best).map((p) => [round6(p.lat), round6(p.lon)] as [number, number]),
+      outline: simplifyRing(best).map(roundPoint),
+      ...(hazards.length ? { hazards } : {}),
     });
   }
   return { greens, missing: holes.filter((n) => !greens.has(n)) };
@@ -237,35 +295,36 @@ function range18() { return Array.from({ length: 18 }, (_, i) => i + 1); }
 
 // ----- saving on the course --------------------------------------------------------------------------------------
 
+export const copyHazards = (hz: Hazard[]): Hazard[] =>
+  hz.map((h) => ({ kind: h.kind, shape: h.shape.map((p) => [p[0], p[1]] as [number, number]) }));
+
 /** A green he saved himself by standing at the pin: a centre with no outline. */
 export const isHandSaved = (h: Hole) => !!h.green && !h.greenShape;
 
 /**
  * The course with the found greens written on its holes. Holes saved by hand keep their green unless `replaceMine`.
- * Par, stroke index and everything else on the course stay as they are.
+ * Hazards found are written on every hole they belong to (a hand-saved green keeps them too). Par, stroke index and
+ * everything else on the course stay as they are.
  */
 export function applyGreens(course: Course, found: Map<number, FoundGreen>, replaceMine = false): Course {
   return {
     ...course,
     holes: course.holes.map((h) => {
       const g = found.get(h.number);
-      if (!g || (isHandSaved(h) && !replaceMine)) return h;
-      return { ...h, green: { ...g.centre }, greenShape: g.outline.map((p) => [p[0], p[1]] as [number, number]) };
+      if (!g) return h;
+      const hazards = g.hazards?.length ? { hazards: copyHazards(g.hazards) } : {};
+      if (isHandSaved(h) && !replaceMine) return { ...h, ...hazards };
+      return { ...h, green: { ...g.centre }, greenShape: g.outline.map((p) => [p[0], p[1]] as [number, number]), ...hazards };
     }),
   };
 }
 
-// ----- yardage ---------------------------------------------------------------------------------------------------
+// ----- yardage (the fallback) ------------------------------------------------------------------------------------
 
 export interface Yardage { centre: number; front?: number; back?: number }
 
-/**
- * Whole yards from the player to the green centre, and with an outline to its front and back as seen from where he
- * stands: the nearest point of the outline (on an edge) and the farthest (always a vertex).
- */
-export function yardage(player: LatLon, green: LatLon, shape?: [number, number][]): Yardage {
-  const centre = Math.round(metresToYards(haversineM(player, green)));
-  if (!shape || shape.length < 3) return { centre };
+/** Metres from the player to the nearest point of an outline (on an edge; 0 on it) and to its farthest point (a vertex). */
+export function nearestFarthestM(player: LatLon, shape: [number, number][]): { front: number; back: number } {
   const ring = shape.map(([lat, lon]) => ({ lat, lon }));
   const pr = projector(player);
   const pts = ring.map(pr.to);
@@ -273,6 +332,16 @@ export function yardage(player: LatLon, green: LatLon, shape?: [number, number][
   let near = Infinity;
   for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) near = Math.min(near, dist(o, closestOnSegment(o, pts[j], pts[i])));
   if (pointInRing(o, pts)) near = 0;
-  const far = Math.max(...ring.map((p) => haversineM(player, p)));
-  return { centre, front: Math.round(metresToYards(near)), back: Math.round(metresToYards(far)) };
+  return { front: near, back: Math.max(...ring.map((p) => haversineM(player, p))) };
+}
+
+/**
+ * Whole yards to the green centre and the nearest and farthest points of its outline. This is no longer what the panel
+ * shows (that is src/core/line-of-play.ts, along the line of play); it is the fallback when the line finds no crossing.
+ */
+export function yardage(player: LatLon, green: LatLon, shape?: [number, number][]): Yardage {
+  const centre = Math.round(metresToYards(haversineM(player, green)));
+  if (!shape || shape.length < 3) return { centre };
+  const nf = nearestFarthestM(player, shape);
+  return { centre, front: Math.round(metresToYards(nf.front)), back: Math.round(metresToYards(nf.back)) };
 }

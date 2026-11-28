@@ -1,6 +1,8 @@
-// T6.1: live yardage on the hole screen of the hosted copy (dist/site/ under /Golf-buddy/). Geolocation is mocked
-// by Playwright, and the OpenStreetMap Overpass servers by routing (the hand-built fixture in src/core/greens.fixture.json
-// stands in for their answer). 390 px phone, light and dark. Expected yards are worked out here independently of the app.
+// T6.1 / T7.1: live yardage on the hole screen of the hosted copy (dist/site/ under /Golf-buddy/). Geolocation is
+// mocked by Playwright, and the OpenStreetMap Overpass servers by routing (the hand-built fixture in
+// src/core/greens.fixture.json, plus bunkers and water drawn here on hole 1, stands in for their answer). 390 px phone,
+// light and dark. Expected yards are worked out here independently of the app: front / back where the line from the
+// player to the middle of the green crosses its outline, hazards from rectangles drawn square to that line.
 import { mkdirSync, readFileSync } from 'node:fs';
 import { addCourse, assert, eq, handAdded, noHorizontalScroll, rancho, startRound, text } from './lib.mjs';
 import { bundle } from '../scripts/build.mjs';
@@ -8,7 +10,7 @@ import { fetchGreens, loadLib } from '../scripts/fetch-greens.mjs';
 
 const KEY = 'golf-buddy:v1';
 const SHOTS = process.env.REVIEW_DIR
-  || '/tmp/claude-0/-home-user/24fc6364-1d94-5479-9217-f29e60caeeeb/scratchpad/review/T6.1';
+  || '/tmp/claude-0/-home-user/24fc6364-1d94-5479-9217-f29e60caeeeb/scratchpad/review/T7.1';
 const FIXTURE = readFileSync(new URL('../src/core/greens.fixture.json', import.meta.url), 'utf8');
 const ELEMENTS = JSON.parse(FIXTURE).elements;
 const ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter',
@@ -37,28 +39,83 @@ function fixtureGreen(n) {
   const ring = rings.reduce((a, b) => (Math.hypot(...Object.values(xy(end, mid(b)))) < Math.hypot(...Object.values(xy(end, mid(a)))) ? b : a));
   return ring.slice(0, -1);
 }
-/** Centre (area centroid), front (nearest point of the outline) and back (farthest point), in yards. */
-function expected(player, ring) {
-  const o = { lat: player.latitude, lon: player.longitude };
+/** Area centroid of a ring, in metres around o. */
+function centroidXY(o, ring) {
   const p = ring.map((q) => xy(o, q));
   let a = 0, cx = 0, cy = 0;
   for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
     const f = p[j].x * p[i].y - p[i].x * p[j].y; a += f; cx += (p[j].x + p[i].x) * f; cy += (p[j].y + p[i].y) * f;
   }
-  const c = { x: cx / (3 * a), y: cy / (3 * a) };
-  let near = Infinity;
-  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
-    const A = p[j], B = p[i], dx = B.x - A.x, dy = B.y - A.y;
-    const t = Math.max(0, Math.min(1, (-A.x * dx - A.y * dy) / (dx * dx + dy * dy)));
-    near = Math.min(near, Math.hypot(A.x + t * dx, A.y + t * dy));
+  return { x: cx / (3 * a), y: cy / (3 * a) };
+}
+/** Middle (area centroid), and front / back: the crossings of the outline nearest the middle before and after it on
+ *  the line from the player through the middle (front 0 when he stands on the green). In yards. */
+function expected(player, ring) {
+  const o = { lat: player.latitude, lon: player.longitude };
+  const p = ring.map((q) => xy(o, q));
+  const c = centroidXY(o, ring);
+  const len = Math.hypot(c.x, c.y);
+  // Where does the ray s * (c / len) meet the edge A + u (B - A), 0 <= u <= 1? Solve the 2 x 2 system by Cramer's rule.
+  const ts = [];
+  let inside = false;
+  for (let i = 0; i < p.length; i++) {
+    const A = p[i], B = p[(i + 1) % p.length];
+    const m11 = c.x / len, m12 = -(B.x - A.x), m21 = c.y / len, m22 = -(B.y - A.y);
+    const det = m11 * m22 - m12 * m21;
+    if (Math.abs(det) > 1e-12) {
+      const s = (A.x * m22 - m12 * A.y) / det, u = (m11 * A.y - m21 * A.x) / det;
+      if (u >= 0 && u <= 1) ts.push(s);
+    }
+    if ((A.y > 0) !== (B.y > 0) && A.x + (B.x - A.x) * (-A.y) / (B.y - A.y) > 0) inside = !inside;
   }
-  return { centre: toYd(Math.hypot(c.x, c.y)), front: toYd(near), back: toYd(Math.max(...p.map((q) => Math.hypot(q.x, q.y)))) };
+  const front = inside ? 0 : Math.max(...ts.filter((t) => t <= len));
+  const back = Math.min(...ts.filter((t) => t >= len));
+  return { centre: toYd(len), front: toYd(front), back: toYd(back) };
+}
+/** Rectangles drawn in metres along (a) and to the left of (c) the line from `from` to the middle of `ring`. */
+function frame(from, ring) {
+  const o = { lat: from.latitude, lon: from.longitude };
+  const c = centroidXY(o, ring), len = Math.hypot(c.x, c.y), u = { x: c.x / len, y: c.y / len };
+  const ll = (a, cc) => {
+    const x = a * u.x - cc * u.y, y = a * u.y + cc * u.x;
+    return { lat: o.lat + y / M_PER_DEG, lon: o.lon + x / (M_PER_DEG * Math.cos(o.lat * Math.PI / 180)) };
+  };
+  return (a0, a1, c0, c1) => { const g = [ll(a0, c0), ll(a0, c1), ll(a1, c1), ll(a1, c0)]; return [...g, g[0]]; };
 }
 /** A point part of the way from the first tee towards a green's middle. */
 function along(from, ring, frac) {
   const m = { lat: ring.reduce((s, p) => s + p.lat, 0) / ring.length, lon: ring.reduce((s, p) => s + p.lon, 0) / ring.length };
   return { latitude: from.latitude + (m.lat - from.latitude) * frac, longitude: from.longitude + (m.lon - from.longitude) * frac };
 }
+// Bunkers and water on hole 1, drawn square to the line from the first tee to the middle of its green: four in play
+// (the panel lists the nearest three) and one behind the tee.
+const HZ_RECT = frame(TEE1, fixtureGreen(1));
+const HAZARDS = [
+  { tags: { golf: 'bunker' }, rect: [300, 310, -4, 4] },          // in line, the fourth: not listed
+  { tags: { natural: 'water' }, rect: [180, 200, -30, 30] },      // across the line: clipped to the 40 m corridor
+  { tags: { golf: 'bunker' }, rect: [260, 272, -25, -8] },        // right of the line
+  { tags: { golf: 'bunker' }, rect: [230, 245, 8, 25] },          // left of it
+  { tags: { golf: 'bunker' }, rect: [-40, -20, -5, 5] },          // behind the tee: dropped
+];
+const FIXTURE_HZ = JSON.stringify({ ...JSON.parse(FIXTURE), elements: [...ELEMENTS,
+  ...HAZARDS.map((h, i) => ({ type: 'way', id: 9100 + i, tags: h.tags, geometry: HZ_RECT(...h.rect) }))] });
+const yd = (m) => Math.round(toYd(m));
+const HZ_LINES = [
+  `Water in line: ${yd(180)} to reach, ${yd(200)} to carry`,
+  `Bunker left: ${yd(230)} to reach, ${yd(245)} to carry`,
+  `Bunker right: ${yd(260)} to reach, ${yd(272)} to carry`,
+];
+async function hazardRows(page, want, what) {
+  const got = await page.locator('#yardage-hazards li').allTextContents();
+  eq(got.length, want.length, `${what}: hazard rows (${got.join(' | ')})`);
+  for (const [i, line] of want.entries()) {
+    const nums = (t) => (t.match(/\d+/g) ?? []).map(Number);
+    const g = nums(got[i]), w = nums(line);
+    assert(got[i].replace(/\d+/g, '#') === line.replace(/\d+/g, '#') && g.every((v, k) => Math.abs(v - w[k]) <= 1),
+      `${what}: row ${i + 1} reads "${got[i]}", expected "${line}" (within 1 yd)`);
+  }
+}
+
 async function near(page, sel, want, what) {
   const got = Number(await text(page, sel));
   assert(Math.abs(got - want) <= 1, `${what}: shows ${got}, expected ${want.toFixed(1)} (within 1 yd)`);
@@ -104,7 +161,7 @@ async function phone(browser, baseURL, { dark = false, geo = TEE1, acc = 4, serv
   return { page, context, errors, calls, url, origin };
 }
 
-/** Answers for the four servers, in order: 'ok' (the fixture), 'empty' (nothing mapped), 'abort' (no connection),
+/** Answers for the four servers, in order: 'ok' (the fixture), 'hazards' (the fixture with hole 1's hazards), 'empty' (nothing mapped), 'abort' (no connection),
  *  'timeout' (Overpass ran out of time: 200 with a runtime-error remark) or a status. `calls.main` counts the first
  *  server, `calls.spare` the other three, `calls.order` the server numbers asked. */
 async function servers(context, calls, ...plan) {
@@ -116,6 +173,7 @@ async function servers(context, calls, ...plan) {
     if (how === 'abort') return route.abort('connectionfailed');
     const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*' };
     if (typeof how === 'number') return route.fulfill({ status: how, headers, body: 'busy' });
+    if (how === 'hazards') return route.fulfill({ status: 200, headers, body: FIXTURE_HZ });
     if (how === 'timeout') return route.fulfill({ status: 200, headers, body: '{"elements":[],"remark":"runtime error: Query timed out"}' });
     return route.fulfill({ status: 200, headers, body: how === 'empty' ? '{"elements":[]}' : FIXTURE });
   };
@@ -143,7 +201,7 @@ async function hidePage(page, hidden) {
 async function live(browser, baseURL, dark) {
   const { page, context, errors, calls } = await phone(browser, baseURL, { dark });
   try {
-    await servers(context, calls, 'ok');
+    await servers(context, calls, 'hazards');
     await addCourse(page);                 // a course of his own: no bundled greens (Rancho Solano ships with them)
     await startRound(page, { courseId: handAdded.id });
     // Off until a tap: no location, no network.
@@ -191,6 +249,12 @@ async function live(browser, baseURL, dark) {
     await near(page, '#yardage-centre', want.centre, 'centre from the tee');
     await near(page, '#yardage-front', want.front, 'front from the tee');
     await near(page, '#yardage-back', want.back, 'back from the tee');
+    eq(await page.getAttribute('#yardage', 'data-method'), 'line', 'front and back from the line of play');
+    // Hazards: the nearest three in play, nearest first; the fourth and the one behind the tee are not listed.
+    await hazardRows(page, HZ_LINES, 'from the tee');
+    await stepperVisible(page, 'three hazards');
+    await noHorizontalScroll(page, 'hazards');
+    await shot(page, 'live-hazards', dark);
     eq(await text(page, '#yardage-acc'), '± 4 yd', 'accuracy');
     assert((await text(page, '#yardage-osm')).includes('Green positions © OpenStreetMap contributors'), 'attribution shown');
     eq(await page.getAttribute('#yardage-osm a', 'href'), 'https://www.openstreetmap.org/copyright', 'attribution link');
@@ -209,6 +273,7 @@ async function live(browser, baseURL, dark) {
       want.centre, { timeout: 4000 });
     await near(page, '#yardage-front', want.front, 'front after moving');
     await near(page, '#yardage-back', want.back, 'back after moving');
+    eq(await page.locator('#yardage-hazards').count(), 0, 'hazards behind him are dropped');
     eq(await page.evaluate(() => window.__mut), 0, 'a new position re-renders only the yardage panel');
     await stepperVisible(page, 'live');
     await noHorizontalScroll(page, 'live yardage');
@@ -222,8 +287,10 @@ async function live(browser, baseURL, dark) {
     await near(page, '#yardage-front', want.front, 'hole 2 front');
     await near(page, '#yardage-back', want.back, 'hole 2 back');
 
-    // Weak signal: numbers dimmed, said plainly.
-    await context.setGeolocation({ ...P, accuracy: 40 });
+    // Weak signal: numbers dimmed, said plainly. (A weak fix right next to good ones is outweighed by them for 6 s, so
+    // this one is 50 m on, where the average starts afresh.)
+    const P50 = { latitude: P.latitude - 50 / M_PER_DEG, longitude: P.longitude };
+    await context.setGeolocation({ ...P50, accuracy: 40 });
     await page.waitForSelector('#yardage[data-weak="true"]');
     eq(await text(page, '#yardage-weak'), 'Weak GPS signal', 'weak line');
     eq(await text(page, '#yardage-acc'), '± 44 yd', 'weak accuracy');
@@ -243,6 +310,7 @@ async function live(browser, baseURL, dark) {
     await page.waitForSelector('#gps-panel');
     await page.waitForSelector('#gps-acc');
     eq(await text(page, '#gps-acc'), 'Your location: ± 5 yd. Live yardage keeps location on while you play.', 'sheet shares the fix');
+    eq(await text(page, '#gps-yards'), await text(page, '#yardage-centre'), 'the sheet shows the same middle as the panel');
     await page.click('#distance-close');
     g = await geoCount(page);
     eq(g.watch, 1, 'the sheet started no watch of its own');
@@ -328,7 +396,7 @@ async function bundledGreens(browser, baseURL) {
   const files = new Map();
   await fetchGreens({
     course: { ...rancho, location: { lat: TEE1.latitude, lon: TEE1.longitude } }, lib: await loadLib(), outFile: 'g.json',
-    fetchImpl: async () => new Response(FIXTURE), log: () => {},
+    fetchImpl: async () => new Response(FIXTURE_HZ), log: () => {},
     io: { exists: (f) => files.has(f), read: (f) => files.get(f), write: (f, t) => files.set(f, t) },
   });
   const js = (await bundle({ greens: { 'rancho-solano': JSON.parse(files.get('g.json')) } })).trim();
@@ -350,6 +418,7 @@ async function bundledGreens(browser, baseURL) {
     await near(page, '#yardage-centre', want.centre, 'bundled centre from the tee');
     await near(page, '#yardage-front', want.front, 'bundled front from the tee');
     await near(page, '#yardage-back', want.back, 'bundled back from the tee');
+    await hazardRows(page, HZ_LINES, 'bundled hazards from the tee');
     assert((await text(page, '#yardage-osm')).includes('Green positions © OpenStreetMap contributors'), 'attribution shown');
     await page.click('#hole-next');
     await page.waitForSelector('#hole-screen[data-hole="2"]');
@@ -363,6 +432,8 @@ async function shippedRancho(browser, baseURL) {
   // The hosted copy as built, with the real greens file committed for Rancho Solano: live yardage on hole 10 with no
   // lookup step and no network call. G10 is hole 10's green centre in that file.
   const G10 = { latitude: 38.285851, longitude: -122.072896 };
+  const shipped = JSON.parse(readFileSync(new URL('../src/data/courses/rancho-solano.greens.json', import.meta.url), 'utf8'));
+  const RING10 = shipped.holes['10'].greenShape.map(([lat, lon]) => ({ lat, lon }));
   const { page, context, errors, calls } = await phone(browser, baseURL, { geo: G10 });
   try {
     await servers(context, calls, 'ok');
@@ -383,6 +454,19 @@ async function shippedRancho(browser, baseURL) {
       want, { timeout: 4000 }).catch(async () => {
       throw new Error(`hole 10 middle from 150 yd: shows ${await text(page, '#yardage-centre')}, expected ${want.toFixed(1)} (within 2 yd)`);
     });
+    let w = expected(P, RING10);
+    await near(page, '#yardage-front', w.front, 'hole 10 front from 150 yd south');
+    await near(page, '#yardage-back', w.back, 'hole 10 back from 150 yd south');
+    eq(await page.locator('#yardage-hazards').count(), 0, 'no hazards in the shipped file: no hazard rows');
+    // 150 yd due east, beside the green: front and back are its depth on that line.
+    const E = { latitude: G10.latitude, longitude: G10.longitude + 150 * 0.9144 / (R * Math.PI / 180 * Math.cos(G10.latitude * Math.PI / 180)) };
+    await context.setGeolocation({ ...E, accuracy: 4 });
+    w = expected(E, RING10);
+    await page.waitForFunction((v) => Math.abs(Number(document.querySelector('#yardage-front')?.textContent) - v) <= 1,
+      w.front, { timeout: 4000 }).catch(() => {});
+    await near(page, '#yardage-front', w.front, 'hole 10 front from 150 yd east');
+    await near(page, '#yardage-centre', w.centre, 'hole 10 middle from 150 yd east');
+    await near(page, '#yardage-back', w.back, 'hole 10 back from 150 yd east');
     eq(calls.main + calls.spare + calls.other.length, 0, `no network call (${calls.other.join(' ')})`);
     eq(errors.length, 0, `page errors: ${errors.join(' | ')}`);
   } finally { await context.close(); }

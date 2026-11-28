@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { readExif } from '../../core/exif';
 import { accuracyYards, distanceYards } from '../../core/geo';
+import { holeYards } from '../../core/line-of-play';
 import {
   clampFlagFt, DEFAULT_FLAG_FT, effectiveF35, FLAG_FT_MAX, hasDigitalZoom, FLAG_FT_MIN, LENSES, measure, spanPx, type Point,
 } from '../../core/rangefinder';
@@ -552,7 +553,9 @@ export function saveGreenHere(store: ReturnType<typeof useStore>, course: Course
 function GpsPanel({ courseId, hole, onUsePhoto }: { courseId: string; hole: number; onUsePhoto: () => void }) {
   const store = useStore();
   const course: Course | undefined = findCourse(courseId, store.data.courses);
-  const green = course?.holes.find((h) => h.number === hole)?.green;
+  const theHole = course?.holes.find((h) => h.number === hole);
+  const green = theHole?.green;
+  const fromMap = !!theHole?.greenShape;
   // The page's one location watcher, shared with live yardage on the hole screen.
   const gps = useLocation();
   const [ball, setBall] = useState<Fix | null>(null);
@@ -599,10 +602,12 @@ function GpsPanel({ courseId, hole, onUsePhoto }: { courseId: string; hole: numb
               <>
                 <small>To the green</small>
                 <div class="rf-readout">
-                  <div class="rf-yards"><b class="num" id="gps-yards">{distanceYards(fix, green)}</b><span>yd</span></div>
+                  {/* The same line-of-play computation as live yardage on the hole screen. */}
+                  <div class="rf-yards"><b class="num" id="gps-yards">{holeYards(fix, { green, greenShape: theHole?.greenShape, hazards: theHole?.hazards }).centre}</b><span>yd</span></div>
                   <div class="rf-pm num" id="gps-pm">± {accYd} yd</div>
                 </div>
-                <p class="rf-basis">To where you saved the pin on hole {hole}. The pin moves day to day.</p>
+                <p class="rf-basis">{fromMap ? `To the middle of the green on hole ${hole}, from the map. The pin may be front or back.`
+                  : `To where you saved the pin on hole ${hole}. The pin moves day to day.`}</p>
               </>
             ) : (
               <p class="gps-none" id="gps-no-green">No green saved for hole {hole} yet. Stand at the pin once and save it; from then on the

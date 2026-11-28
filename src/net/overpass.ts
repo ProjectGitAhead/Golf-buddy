@@ -1,4 +1,4 @@
-// The app's one network call (plan sections 15.1 and 15.3): golf greens and hole lines around the player from
+// The app's one network call (plan sections 15.1, 15.3 and 16.1): golf greens, hole lines, bunkers and water around the player from
 // OpenStreetMap's Overpass service. Only ever called from a tap, only in the hosted copy. The position is rounded to
 // about 100 m first, so only the course's rough location leaves the phone. The four public servers are asked one
 // after another, 25 s each, stopping at the first good answer; nothing else retries. The request is a plain
@@ -20,9 +20,13 @@ export const TIMEOUT_MS = 25_000;
  *  of time) before the phone gives up on it. */
 export const SERVER_TIMEOUT_S = 20;
 
+/** The areas asked for as ways and as relations: greens, bunkers and water (any of the three water tags). */
+const AREAS = ['"golf"="green"', '"golf"="bunker"', '"natural"="water"', '"golf"="water_hazard"', '"golf"="lateral_water_hazard"'];
+
 export function overpassQuery(lat: number, lon: number, radiusM = SEARCH_RADIUS_M): string {
   const at = `${radiusM},${lat.toFixed(3)},${lon.toFixed(3)}`;
-  return `[out:json][timeout:${SERVER_TIMEOUT_S}];(way["golf"="green"](around:${at});relation["golf"="green"](around:${at});`
+  return `[out:json][timeout:${SERVER_TIMEOUT_S}];(`
+    + AREAS.map((t) => `way[${t}](around:${at});relation[${t}](around:${at});`).join('')
     + `way["golf"="hole"](around:${at}););out tags geom;`;
 }
 
@@ -108,7 +112,7 @@ export async function runQuery(query: string, opts: AskOptions = {}): Promise<{ 
   throw new OverpassError(attempts);
 }
 
-/** Golf greens and hole lines within 1,500 m of the player. Throws `OverpassError` when every server fails. */
+/** Golf greens, hole lines, bunkers and water within 1,500 m of the player. Throws `OverpassError` when every server fails. */
 export async function loadGolfFeatures(lat: number, lon: number, fetchImpl?: typeof fetch): Promise<OsmElement[]> {
   return (await runQuery(overpassQuery(lat, lon), { fetchImpl })).elements;
 }

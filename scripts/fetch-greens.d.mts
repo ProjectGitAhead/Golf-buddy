@@ -3,6 +3,8 @@ import type { Course } from '../src/core/types';
 
 export const BUILD_RADIUS_M: number;
 export const BUILD_TIMEOUT_MS: number;
+export const MAX_FILE_BYTES: number;
+export function formatGreensFile(file: unknown): string;
 export function loadLib(): Promise<unknown>;
 export function fetchGreens(opts: {
   course: Course;
