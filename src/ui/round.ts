@@ -1,5 +1,6 @@
 // Round helpers shared by the screens: creating a round, per-hole facts, running totals, display formats.
 import { courseHandicap, holeMaximum, playedTeeValues, strokeAllocation } from '../core/handicap';
+import { scoringHole } from '../core/snapshot';
 import type { Course, Gender, Hole, HoleScore, Round, Tee } from '../core/types';
 
 export function todayISO(d = new Date()): string {
@@ -35,7 +36,7 @@ export function createRound(course: Course, tee: Tee, holesPlayed: Round['holesP
     courseId: course.id,
     teeId: tee.id,
     snapshot: { courseName: course.name, teeName: tee.name, rating: v.rating, slope: v.slope, par: v.par,
-      holes: v.holes.map((h) => ({ ...h })) },
+      holes: v.holes.map(scoringHole) },   // scoring fields only: the course keeps the geometry
     holesPlayed,
     pcc: 0,
     scores: v.holes.map((h) => ({ hole: h.number, strokes: null })),

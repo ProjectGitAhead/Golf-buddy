@@ -2,9 +2,11 @@
 // sheet. It never starts by itself on a first visit: `turnOn()` is called from a tap. While it is on, the watch runs
 // only while something on screen uses it (`useLocation`) and the page is visible; hiding the page pauses it and
 // showing it again resumes it. There is never more than one `watchPosition` at a time. A screen wake lock is held
-// while numbers are live (refusal tolerated).
+// while numbers are live (refusal tolerated). The fix everyone sees is smoothed (plan 16.1): the accuracy-weighted
+// average of the last few fixes, so the numbers do not flicker; its accuracy is the smoothed accuracy.
 import { useEffect, useState } from 'preact/hooks';
 import { validFix, type LatLon } from '../core/geo';
+import { addFix, smoothedFix, type TimedFix } from '../core/line-of-play';
 
 export interface Fix extends LatLon { acc: number }
 export type LocationState =
@@ -23,6 +25,7 @@ let users = 0;                   // mounted components that use the location
 let watchId: number | null = null;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let hadFix = false;
+let recent: TimedFix[] = [];     // the fixes being averaged; emptied whenever the watch (re)starts
 let wake: { release: () => Promise<void> } | null = null;
 const listeners = new Set<() => void>();
 
@@ -50,6 +53,7 @@ function watch() {
   const g = geo();
   if (!g) { wanted = false; set({ state: 'blocked' }); return; }
   hadFix = false;
+  recent = [];
   if (current.state !== 'waiting') set({ state: 'waiting' });
   timer = setTimeout(() => {
     clear(); wanted = false;
@@ -58,11 +62,12 @@ function watch() {
   try {
     watchId = g.watchPosition(
       (p) => {
-        const fix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
-        if (!validFix(fix)) return;
+        const raw = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
+        if (!validFix(raw) || !Number.isFinite(raw.acc)) return;
         if (timer) { clearTimeout(timer); timer = null; }
         hadFix = true;
-        set({ state: 'live', fix });
+        recent = addFix(recent, { ...raw, t: Number.isFinite(p.timestamp) && p.timestamp > 0 ? p.timestamp : Date.now() });
+        set({ state: 'live', fix: smoothedFix(recent) });
       },
       (err) => {
         if (err.code === 1) { clear(); wanted = false; set({ state: 'blocked' }); return; }  // refused, or not allowed here

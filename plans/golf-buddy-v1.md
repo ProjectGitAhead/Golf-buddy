@@ -391,3 +391,52 @@ Both Overpass endpoints failed from his phone; the reason is unknown and this co
   first good answer. The failure line names the reason in plain words: no connection, the map service is busy
   (with the status), or it took too long. The fragment URL allowance grows to exactly these four endpoints.
 - A hand-saved green still wins over a bundled or looked-up one.
+
+## 16. Accurate distances on any course (owner, 2026-11-28)
+
+Owner: "start working on the repos and seeing if we can get a synonymous version running for any course."
+Research (two reports, 2026-11-28) found: our front/back method (nearest / farthest outline point) overstates
+the spread from the side of a green; the best open method is a ray along the line of play; OpenStreetMap had
+all 18 Rancho Solano greens; public Overpass servers refuse many requests (406 without a client identity,
+429 when busy); OpenGolfAPI offers keyless course search. No paid data in this phase.
+
+### 16.1 Line-of-play distances (T7.1)
+- Port `src/pkjs/distance.js` from `j5uh/pebble-watch-golf` (MIT, "Copyright (c) 2026 John Suh") to
+  `src/core/line-of-play.ts`, keeping its notice in the file header and adding `THIRD-PARTY-NOTICES.md`. The
+  source is in the scratchpad at `.../scratchpad/repos/pebble-watch-golf/`. Code from repos with no licence
+  or AGPL is NOT copied.
+- Front / centre / back: project the green ring to local metres around the player; target = centroid (an
+  interior point when the centroid falls outside the ring); intersect the ray player -> target with every
+  edge; front = the last crossing before the target, back = the first after it; on the green: front 0, back
+  = the exit crossing; no crossing: fall back to nearest / farthest point-to-segment. Unit tests: from the
+  fairway, from beside the green, on the green, a crescent green, a degenerate ring.
+- Position smoothing: an accuracy-weighted average of the last few fixes (at most 5, none older than 6 s,
+  reset on a jump over 30 m), so the number does not flicker; the plus/minus shown is the smoothed accuracy.
+- Hazards: `Hole.hazards?: { kind: 'bunker' | 'water'; shape: [number, number][] }[]` (optional field).
+  Reach and carry by projecting the hazard, clipped to a 40 m wide corridor around the player -> target
+  line, onto that line: reach = nearest forward point (0 when standing in it), carry = farthest; hazards
+  behind the player or beyond the green are dropped; side label left / right / in line. The panel lists up
+  to three hazards in play under the yardage ("Bunker left: 212 to reach, 228 to carry").
+- Hazard data from OpenStreetMap in the same request as greens: `golf=bunker`, `natural=water`,
+  `golf=water_hazard`, `golf=lateral_water_hazard` within the radius; a hazard belongs to the hole whose
+  `golf=hole` line passes within 45 m of it (it may belong to two holes). `scripts/fetch-greens.mjs` and the
+  saved file carry hazards too (outlines simplified to 30 points; file stays under 200 KB).
+
+### 16.2 Any course (T7.2)
+- **A dependable map lookup.** nginx on the Fly app gets a same-origin endpoint `/api/osm` that forwards the
+  query to the Overpass servers in order with fail-over (`proxy_next_upstream` on error, timeout, 406, 429,
+  5xx), sends a `User-Agent` naming the app and its repository (the servers' usage policy asks for one),
+  caches good answers on disk for 30 days keyed by the request body, limits request size and rate, and only
+  accepts POST. The app asks `/api/osm` first and the public servers directly only if it fails. The
+  Dockerfile runs `nginx -t` at build time so a bad config stops the deploy instead of breaking the site.
+- **Find a course.** Courses > "Find a course": by name or "near me", through OpenGolfAPI
+  (`api.opengolfapi.org`, no key, browser-callable; ODbL: show "Course data (c) OpenGolfAPI contributors").
+  A result fills the course editor: name, location, hole pars and stroke indexes where present, tees with
+  rating / slope / yardage where the tees endpoint has them. Anything missing is flagged for him to type
+  from the card, exactly like a scorecard scan. The executor confirms the API's real response shape with one
+  request from CI or records that it could not and builds to the documented schema, saying so.
+- **Greens and hazards for that course** load around the course's own coordinates (not the player's), once,
+  when the course is saved or first played, and are stored with the course. The panel reports "Found N of
+  18 greens". Holes with no mapped green keep the "I'm at the pin: save this green" path.
+- The fragment URL allowance grows by the OpenGolfAPI host only.
+- Out of scope: paid data (Stracka and others) and tracing from imagery; revisit after he has used this.

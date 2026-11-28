@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fixture from './greens.fixture.json';
 import { haversineM, metresToYards, type LatLon } from './geo';
 import {
-  applyGreens, assembleRings, centroid, distanceToRingM, greenPolygons, holeLines, matchGreens, simplifyRing, yardage,
+  applyGreens, assembleRings, centroid, distanceLineToRingM, distanceToRingM, greenPolygons, holeLines, matchGreens, simplifyRing, yardage,
   type OsmElement,
 } from './greens';
 import type { Course } from './types';
@@ -177,5 +177,73 @@ describe('saving on the course', () => {
     const found = matchGreens(elements, TEE1).greens;
     const next = applyGreens(course, found, true);
     expect(next.holes[0].green).toEqual(found.get(1)!.centre);
+  });
+});
+
+describe('hazards for each hole', () => {
+  // Squares of `half` metres either side of a point, as Overpass ways.
+  const sq = (id: number, c: LatLon, half: number, tags: Record<string, string>): OsmElement => {
+    const dn = half / 111_195, de = half / (111_195 * Math.cos((c.lat * Math.PI) / 180));
+    const g = [[-1, -1], [-1, 1], [1, 1], [1, -1], [-1, -1]].map(([a, b]) => ({ lat: c.lat + a * dn, lon: c.lon + b * de }));
+    return { type: 'way', id, tags, geometry: g };
+  };
+  const east = (p: LatLon, m: number): LatLon => ({ lat: p.lat, lon: p.lon + m / (111_195 * Math.cos((p.lat * Math.PI) / 180)) });
+  const MID1 = { lat: 38.2623468, lon: -122.0298626 };     // the bend of hole 1's line
+  const extra: OsmElement[] = [
+    sq(9001, east(MID1, 30), 8, { golf: 'bunker' }),        // 22 m from the line: hole 1
+    sq(9002, east(MID1, 70), 8, { golf: 'bunker' }),        // 62 m from it: no hole
+    // Between hole 1's green end and hole 2's tee: both holes.
+    sq(9003, { lat: 38.26424, lon: -122.02975 }, 10, { natural: 'water' }),
+    sq(9004, { lat: 38.2610, lon: -122.0299 }, 6, { golf: 'lateral_water_hazard' }),
+    sq(9005, { lat: 38.2610, lon: -122.0303 }, 6, { golf: 'water_hazard' }),
+    sq(9006, east(MID1, -30), 8, { golf: 'fairway' }),      // not a hazard
+    {
+      type: 'relation', id: 9007, tags: { type: 'multipolygon', golf: 'bunker' }, members: [
+        { type: 'way', ref: 1, role: 'outer', geometry: sq(0, east(MID1, -25), 5, {}).geometry!.slice(0, 3) },
+        { type: 'way', ref: 2, role: 'outer', geometry: sq(0, east(MID1, -25), 5, {}).geometry!.slice(2) },
+      ],
+    },
+  ];
+  const r = matchGreens([...elements, ...extra], TEE1);
+
+  it('a hazard goes to every hole whose line passes within 45 m of it, as bunker or water', () => {
+    const h1 = r.greens.get(1)!.hazards!;
+    expect(h1.map((h) => h.kind).sort()).toEqual(['bunker', 'bunker', 'water', 'water', 'water']);
+    const h2 = r.greens.get(2)!.hazards!;
+    expect(h2.map((h) => h.kind)).toEqual(['water']);
+    expect(h2[0].shape).toEqual(h1.find((h) => h.kind === 'water' && Math.abs(h.shape[0][0] - 38.26424) < 0.0002)!.shape);
+    // Hole 5 is nowhere near any of them, and the fixture alone has no hazards.
+    expect(r.greens.get(5)!.hazards).toBeUndefined();
+    expect(matchGreens(elements, TEE1).greens.get(1)!.hazards).toBeUndefined();
+  });
+
+  it('hazard outlines are open rings of at most 30 points', () => {
+    const ring = Array.from({ length: 80 }, (_, i) => ({
+      lat: MID1.lat + (20 / 111_195) * Math.sin((i / 80) * 2 * Math.PI),
+      lon: MID1.lon + (20 / 87_500) * Math.cos((i / 80) * 2 * Math.PI),
+    }));
+    const big = matchGreens([...elements, { type: 'way', id: 9100, tags: { natural: 'water' }, geometry: [...ring, ring[0]] }], TEE1);
+    const w = big.greens.get(1)!.hazards!.find((h) => h.kind === 'water')!;
+    expect(w.shape.length).toBeLessThanOrEqual(30);
+    expect(w.shape.length).toBeGreaterThanOrEqual(8);
+  });
+
+  it('distance from a line to a ring: 0 where the line crosses it', () => {
+    const ring = sq(0, MID1, 10, {}).geometry!.slice(0, 4) as LatLon[];
+    expect(distanceLineToRingM([{ lat: 38.262, lon: -122.0298626 }, { lat: 38.2627, lon: -122.0298626 }], ring)).toBe(0);
+    expect(distanceLineToRingM([east(MID1, 40), east(MID1, 60)], ring)).toBeCloseTo(30, 0);
+  });
+
+  it('applyGreens writes the hazards, also on a hole whose hand-saved green is kept', () => {
+    const course: Course = {
+      id: 'c', name: 'C', verified: true, updatedAt: '', tees: [],
+      holes: Array.from({ length: 18 }, (_, i) => ({ number: i + 1, par: 4, strokeIndex: i + 1 })),
+    };
+    course.holes[0] = { ...course.holes[0], green: { lat: 1, lon: 2 } };
+    const next = applyGreens(course, r.greens);
+    expect(next.holes[0].green).toEqual({ lat: 1, lon: 2 });
+    expect(next.holes[0].hazards).toEqual(r.greens.get(1)!.hazards);
+    expect(next.holes[1].hazards).toHaveLength(1);
+    expect(next.holes[4].hazards).toBeUndefined();
   });
 });

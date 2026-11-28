@@ -1,14 +1,16 @@
-// Live yardage on the hole screen (plan section 15.2): front / centre / back to the green from where he stands, from
-// the page's one location watcher. Hosted copy only: inside Claude (`window.claude` present) the page cannot use
+// Live yardage on the hole screen (plan sections 15.2 and 16.1): front / middle / back of the green along the line
+// from where he stands to the middle of the green, and up to three bunkers or water in play on that line, from the
+// page's one location watcher. Hosted copy only: inside Claude (`window.claude` present) the page cannot use
 // location, so nothing renders there. Nothing touches location or the network before a tap; on a later visit it
 // resumes by itself only when live yardage was on before and the browser already grants location.
 import type { JSX } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
 import { accuracyYards } from '../../core/geo';
-import { applyGreens, isHandSaved, matchGreens, yardage, type FoundGreen } from '../../core/greens';
+import { applyGreens, isHandSaved, matchGreens, type FoundGreen } from '../../core/greens';
+import { hazardLine, holeYards } from '../../core/line-of-play';
 import type { Course } from '../../core/types';
 import { findCourse } from '../../data/courses';
-import { failureLine, loadGolfFeatures, OSM_COPYRIGHT_URL, OverpassError } from '../../net/overpass';
+import { failureLine, fitCourse, loadGolfFeatures, OSM_COPYRIGHT_URL, OverpassError } from '../../net/overpass';
 import { useStore } from '../../store/use-store';
 import {
   onForYardage, permissionGranted, rememberYardage, turnOff, turnOn, useLocation, yardageRemembered, type Fix,
@@ -19,6 +21,8 @@ import { saveGreenHere } from './distance-sheet';
 export const NEAR_MAX_YD = 1500;
 /** Worse than this: numbers dimmed and the signal called weak; a green can't be saved by hand. */
 export const WEAK_ACC_YD = 30;
+/** Hazards listed under the numbers, nearest first. */
+export const MAX_HAZARDS = 3;
 
 export function YardagePanel({ courseId, hole }: { courseId: string; hole: number }) {
   if ((globalThis as { claude?: unknown }).claude) return null;
@@ -116,7 +120,8 @@ function Live({ courseId, hole }: { courseId: string; hole: number }) {
     );
   }
 
-  const y = yardage(fix, h.green, h.greenShape);
+  const y = holeYards(fix, { green: h.green, greenShape: h.greenShape, hazards: h.hazards });
+  const hazards = y.hazards.slice(0, MAX_HAZARDS);
   const fromMap = !!h.greenShape;
   if (y.centre > NEAR_MAX_YD) {
     return (
@@ -128,7 +133,7 @@ function Live({ courseId, hole }: { courseId: string; hole: number }) {
     );
   }
   return (
-    <section class="yd" id="yardage" data-state="live" data-weak={weak} aria-label="Live yardage">
+    <section class="yd" id="yardage" data-state="live" data-weak={weak} data-method={y.method} aria-label="Live yardage">
       <div class="yd-nums num">
         {y.front !== undefined ? <Side id="yardage-front" label="Front" v={y.front} /> : <span />}
         <div class="yd-centre">
@@ -137,6 +142,11 @@ function Live({ courseId, hole }: { courseId: string; hole: number }) {
         </div>
         {y.back !== undefined ? <Side id="yardage-back" label="Back" v={y.back} /> : <span />}
       </div>
+      {hazards.length > 0 && (
+        <ul class="yd-hz num" id="yardage-hazards" aria-label="Hazards on your line">
+          {hazards.map((z, i) => <li key={i} id={`yardage-hazard-${i + 1}`} data-kind={z.kind}>{hazardLine(z)}</li>)}
+        </ul>
+      )}
       {weak && <p class="yd-weak" id="yardage-weak" role="status">Weak GPS signal</p>}
       <Foot onOff={off} acc={acc} osm={fromMap} />
     </section>
@@ -186,7 +196,7 @@ function Loader({ course, fix, load, setLoad, pin }: { course: Course; fix: Fix;
     if (load.s !== 'found') return;
     // Read the latest copy of the course: a green may have been saved by hand since the load.
     const latest = findCourse(course.id, store.data.courses) ?? course;
-    store.saveCourse(applyGreens(latest, load.greens, replaceMine));
+    store.saveCourse(fitCourse(applyGreens(latest, load.greens, replaceMine)).course);   // stays under the db's document limit
     setLoad({ s: 'saved', count: load.greens.size - (replaceMine ? 0 : load.mine.length) });
   };
 

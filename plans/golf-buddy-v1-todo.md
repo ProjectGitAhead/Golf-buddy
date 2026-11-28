@@ -176,3 +176,29 @@ panel on the hole screen (hosted copy).
 **Verification:** [ ] `npm test` (greens) · [ ] `npm run e2e` (spec: yardage) · [ ] typecheck · [ ] build
 **Dependencies:** T5.1, T5.2 · **Files:** src/core/greens.ts (+ test + fixture), src/net/overpass.ts, src/core/types.ts (one optional field), src/ui/components/yardage-panel.tsx, src/ui/location.ts (shared watcher), src/ui/components/distance-sheet.tsx (use the shared watcher), src/ui/screens/play-hole.tsx (mount the panel), src/ui/styles.css (one block at the end), scripts/build.mjs and e2e/fragment.spec.mjs (URL allowance only), scripts/site/sw template (cross-origin pass-through), e2e/yardage.spec.mjs, dist/ · **Size:** M
 **Risk:** none · **Screens:** yardage-live, yardage-no-green, yardage-off
+
+## Phase 7: accurate distances on any course
+
+### T7.1 Line-of-play distances and hazards
+**Description:** Plan section 16.1.
+**Acceptance:**
+- [ ] `line-of-play.ts` unit tests: fairway, beside the green (front/back spread equals the green's depth on that line, not its width), on the green, crescent green, degenerate ring fallback; smoothing (weights, age, jump reset)
+- [ ] Hazard tests: reach / carry on the line, a long lake clipped to the corridor, hazard behind the player dropped, side labels, hazard-to-hole assignment
+- [ ] Panel shows front / middle / back from the new method and up to three hazards; e2e checks numbers against values computed independently in the spec, at Rancho Solano with the shipped data and on a fixture course
+- [ ] `fetch-greens.mjs` output includes hazards; shipped file under 200 KB; MIT notice kept; nothing copied from unlicensed or AGPL repos
+- [ ] Existing gate passes
+**Verification:** [ ] `npm test` · [ ] `npm run e2e` · [ ] typecheck · [ ] build
+**Dependencies:** T6.1 · **Files:** src/core/line-of-play.ts (+ tests), src/core/greens.ts (+ tests, hazards), src/core/types.ts (one optional field), src/net/overpass.ts, scripts/fetch-greens.mjs, src/data/courses/index.ts, src/ui/location.ts, src/ui/components/yardage-panel.tsx, src/ui/styles.css (one block at the end), THIRD-PARTY-NOTICES.md, e2e/yardage.spec.mjs, e2e/lib.mjs, dist/ · **Size:** M
+**Risk:** none · **Screens:** yardage-live-hazards
+
+### T7.2 Any course: dependable lookup and course search
+**Description:** Plan section 16.2.
+**Acceptance:**
+- [ ] `/api/osm` in `deploy/nginx.conf` as specified; `nginx -t` runs in the Docker build; the app tries it first, then the public servers
+- [ ] "Find a course" by name and near me fills the editor; missing values flagged; attribution shown; e2e with the API mocked, including an empty result and a failure
+- [ ] Greens and hazards load around the course's coordinates and are stored with it; "Found N of 18 greens" shown; e2e on a fixture
+- [ ] Fragment allowance adds only the OpenGolfAPI host; the artifact copy is unchanged
+- [ ] Existing gate passes
+**Verification:** [ ] `npm test` · [ ] `npm run e2e` · [ ] typecheck · [ ] build
+**Dependencies:** T7.1 · **Files:** deploy/nginx.conf, Dockerfile, src/net/overpass.ts, src/net/course-search.ts (+ tests), src/ui/screens/courses*.tsx, src/ui/components/yardage-panel.tsx, src/ui/styles.css (one block at the end), scripts/build.mjs and e2e/fragment.spec.mjs (URL allowance only), e2e/course-search.spec.mjs, README.md, dist/ · **Size:** M
+**Risk:** none (public endpoint: rate limit and size limit are part of the card) · **Screens:** course-find, course-find-result
