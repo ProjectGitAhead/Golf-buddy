@@ -61,10 +61,19 @@ jobs:
             echo "Green positions unchanged, nothing to save"
             exit 0
           fi
-          COUNT='try{const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(Object.keys(j.holes||{}).length)}catch(e){console.log(0)}'
-          NEW=$(node -e "$COUNT" < "$F")
-          OLD=$(git show "HEAD:$F" | node -e "$COUNT")
+          HOLES='try{const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(JSON.stringify(j.holes||{}))}catch(e){console.log("{}")}'
+          COUNT='console.log(Object.keys(JSON.parse(require("fs").readFileSync(0,"utf8"))).length)'
+          NEW_HOLES=$(node -e "$HOLES" < "$F")
+          OLD_HOLES=$(git show "HEAD:$F" | node -e "$HOLES")
+          if [ "$NEW_HOLES" = "$OLD_HOLES" ]; then
+            git checkout -- "$F"
+            echo "Green positions unchanged, nothing to save"
+            exit 0
+          fi
+          NEW=$(printf '%s' "$NEW_HOLES" | node -e "$COUNT")
+          OLD=$(printf '%s' "$OLD_HOLES" | node -e "$COUNT")
           if [ "$NEW" -lt "$OLD" ]; then
+            git checkout -- "$F"
             echo "Kept the existing green positions file because the new one has fewer holes ($NEW, was $OLD)"
             exit 0
           fi
