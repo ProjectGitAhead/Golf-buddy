@@ -329,3 +329,47 @@ the hosted copy; the GitHub Pages workflow stays in the repo but runs only when 
   one machine that stops when idle.
 - Owner's steps: create a Fly deploy token (`fly tokens create org` or the Fly dashboard > Tokens), add it at
   GitHub repo Settings > Secrets and variables > Actions as `FLY_API_TOKEN`, merge the PR.
+
+## 15. Live yardage to the hole (owner, 2026-11-27)
+
+Owner: "give me current yardage from the hole wherever the user is standing. So they can see how far away they
+are from the hole and decide what club to hit."
+
+Applies where location works (the hosted copy; decided by `window.claude` being absent AND geolocation being
+granted, never by hostname). In the Claude artifact nothing changes.
+
+### 15.1 Green positions from OpenStreetMap
+- `src/net/overpass.ts`: one Overpass query for `golf=green` (ways / relations, with geometry) and `golf=hole`
+  ways (with `ref` and geometry) inside a 1,500 m radius of the player's position. `fetch` with a 15 s abort,
+  first `https://overpass-api.de/api/interpreter`, then `https://overpass.kumi.systems/api/interpreter` once on
+  failure; no other retries. Only ever called from a tap, only in the hosted copy. This is the app's single
+  network call: the fragment rule "no external URL" is relaxed for these two endpoint strings and the
+  attribution link only (update the build check and `e2e/fragment.spec.mjs` to allow exactly those).
+- `src/core/greens.ts` (pure, unit-tested with a fixture): for each `golf=hole` way with a numeric `ref` 1-18,
+  the green is the `golf=green` polygon containing or nearest to the way's last node (within 60 m). When the
+  same `ref` appears more than once (two courses side by side), keep the set of holes whose tees are nearest
+  the player. Output per hole: centre (polygon centroid) and outline (simplified to at most 40 points).
+- Types: `Hole.green` (centre, exists) plus optional `Hole.greenShape?: [number, number][]` on its own line.
+  Saved on the user's copy of the course, like a learned green; a posted round's snapshot is not changed.
+- Before saving, one line reports what was found ("Found 18 of 18 greens") and lists missing holes; holes
+  already saved by hand are kept unless he chooses "Replace mine". If nothing is found: "This course is not
+  mapped in OpenStreetMap yet. Stand at each pin once and save it." and the learn-as-you-play path remains.
+- Attribution, always visible next to the yardage when OSM positions are in use: "Green positions (c)
+  OpenStreetMap contributors".
+- Privacy copy on the button's hint: loading sends the course's rough location to the OpenStreetMap Overpass
+  service; nothing else leaves the phone.
+
+### 15.2 Live yardage on the hole screen
+- A yardage panel directly under the hole header (not inside the Distance sheet): centre yardage very large,
+  front and back smaller on either side, and the GPS accuracy as plus/minus yards. Front / back = the nearest
+  and farthest outline points from the player; with no outline (learned green) only the centre shows.
+- States: (1) "Turn on live yardage" button (first use; the tap requests location); (2) live numbers; (3) "No
+  green position for hole N" with "Load green positions" and "I'm at the pin: save this green"; (4) more than
+  1,500 yd away: "You are not near this hole" instead of a number; (5) accuracy worse than 30 yd: numbers
+  shown dimmed with "Weak GPS signal".
+- One `watchPosition` (high accuracy) for the whole round, shared by the panel and the Distance sheet, started
+  by the first tap; on later visits it starts by itself only if `navigator.permissions` reports `granted`.
+  Paused while the page is hidden and when no round is active; never more than one watcher.
+- A screen wake lock is requested while yardage is live and released when it stops (rejection tolerated).
+- Yardage updates must not re-render the whole hole screen (score entry stays responsive).
+- The service worker ignores cross-origin requests.

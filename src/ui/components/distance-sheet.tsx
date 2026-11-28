@@ -4,13 +4,14 @@
 // and released when the sheet closes.
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { readExif } from '../../core/exif';
-import { accuracyYards, distanceYards, validFix, type LatLon } from '../../core/geo';
+import { accuracyYards, distanceYards } from '../../core/geo';
 import {
   clampFlagFt, DEFAULT_FLAG_FT, effectiveF35, FLAG_FT_MAX, hasDigitalZoom, FLAG_FT_MIN, LENSES, measure, spanPx, type Point,
 } from '../../core/rangefinder';
 import type { Course } from '../../core/types';
 import { findCourse } from '../../data/courses';
 import { useStore } from '../../store/use-store';
+import { locationBlocked, onForYardage, turnOff, turnOn, useLocation, type Fix } from '../location';
 
 /** Hole-screen button plus the sheet it opens. */
 export function DistanceControl({ courseId, hole }: { courseId: string; hole: number }) {
@@ -42,16 +43,14 @@ function CameraGlyph() {
   );
 }
 
-/** Set for the rest of the visit once location was refused or does not exist here. */
-let gpsBlocked = false;
 /** The lens he last picked for a photo without EXIF, kept for the visit. */
 let lastLens: number | undefined;
 
 type Mode = 'photo' | 'gps';
 
 function DistanceSheet({ courseId, hole, onClose }: { courseId: string; hole: number; onClose: () => void }) {
-  const hasGeo = typeof navigator !== 'undefined' && 'geolocation' in navigator;
-  const [blockedAtOpen] = useState(gpsBlocked || !hasGeo);
+  // Location refused this visit, or not there at all: the GPS tab is hidden for the rest of the visit.
+  const [blockedAtOpen] = useState(locationBlocked());
   // GPS leads where location can work: the hosted copy, which has no `window.claude`. Inside Claude the page cannot
   // use location, so the flag photo leads there.
   const gpsFirst = !blockedAtOpen && !(globalThis as { claude?: unknown }).claude;
@@ -536,76 +535,36 @@ function Rangefinder() {
 // GPS (12.2)
 // ---------------------------------------------------------------------------------------------------------------
 
-interface Fix extends LatLon { acc: number }
-type Gps =
-  | { state: 'idle' }
-  | { state: 'waiting' }
-  | { state: 'live'; fix: Fix }
-  | { state: 'nofix'; message: string }
-  | { state: 'blocked' };
-
 const NO_LOCATION = "This page cannot use your phone's location here. The flagstick rangefinder works everywhere.";
-const WAIT_MS = 20_000;
 const SAVE_MAX_ACC_YD = 30;
+
+/** Saves where he stands as the green for one hole on his copy of the course (a hand-saved green has no outline). */
+export function saveGreenHere(store: ReturnType<typeof useStore>, course: Course, hole: number, fix: Fix): void {
+  // Same path as the course editor: a bundled course becomes the user's own copy (same id). Posted and active
+  // rounds keep their own frozen snapshot, which this does not touch.
+  store.saveCourse({ ...course, holes: course.holes.map((h) => {
+    if (h.number !== hole) return h;
+    const { greenShape: _drop, ...rest } = h;
+    return { ...rest, green: { lat: fix.lat, lon: fix.lon } };
+  }) });
+}
 
 function GpsPanel({ courseId, hole, onUsePhoto }: { courseId: string; hole: number; onUsePhoto: () => void }) {
   const store = useStore();
   const course: Course | undefined = findCourse(courseId, store.data.courses);
   const green = course?.holes.find((h) => h.number === hole)?.green;
-  const [gps, setGps] = useState<Gps>({ state: 'idle' });
+  // The page's one location watcher, shared with live yardage on the hole screen.
+  const gps = useLocation();
   const [ball, setBall] = useState<Fix | null>(null);
   const [confirmReplace, setConfirmReplace] = useState(false);
   const [saved, setSaved] = useState(false);
-  const watch = useRef<number | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const hadFix = useRef(false);
-
-  const stop = () => {
-    if (watch.current !== null) { try { navigator.geolocation.clearWatch(watch.current); } catch { /* gone */ } }
-    watch.current = null;
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = null;
-  };
-  useEffect(() => stop, []);
-
-  const block = () => { stop(); gpsBlocked = true; setGps({ state: 'blocked' }); };
-
-  // One geolocation call, from this tap only. Errors stop the watch; nothing retries by itself.
-  const start = () => {
-    stop();
-    const geo = typeof navigator !== 'undefined' ? navigator.geolocation : undefined;
-    if (!geo) { block(); return; }
-    hadFix.current = false;
-    setGps({ state: 'waiting' });
-    timer.current = setTimeout(() => {
-      stop();
-      setGps({ state: 'nofix', message: 'No location after 20 seconds. Step into the open and try again.' });
-    }, WAIT_MS);
-    try {
-      watch.current = geo.watchPosition(
-        (p) => {
-          const fix = { lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy };
-          if (!validFix(fix)) return;
-          if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-          hadFix.current = true;
-          setGps({ state: 'live', fix });
-        },
-        (err) => {
-          if (err.code === 1) { block(); return; }          // PERMISSION_DENIED: refused, or not allowed in this frame
-          if (hadFix.current) return;                       // a passing glitch mid-watch: keep the last fix and keep watching
-          stop();
-          setGps({ state: 'nofix', message: 'Your phone has no location fix yet. Step into the open and try again.' });
-        },
-        { enableHighAccuracy: true, maximumAge: 0 },
-      );
-    } catch { block(); }
-  };
+  const sharedWithYardage = onForYardage();
+  // Turned on from this sheet only: closing it stops location, as the sheet says.
+  useEffect(() => () => { if (!onForYardage()) turnOff(); }, []);
 
   const saveGreen = (fix: Fix) => {
     if (!course) return;
-    // Same path as the course editor: a bundled course becomes the user's own copy (same id). Posted and active
-    // rounds keep their own frozen snapshot, which this does not touch.
-    store.saveCourse({ ...course, holes: course.holes.map((h) => (h.number === hole ? { ...h, green: { lat: fix.lat, lon: fix.lon } } : h)) });
+    saveGreenHere(store, course, hole, fix);
     setConfirmReplace(false);
     setSaved(true);
   };
@@ -627,7 +586,7 @@ function GpsPanel({ courseId, hole, onUsePhoto }: { courseId: string; hole: numb
         <div class="gps-start">
           <p class="gs-hint">Your phone's location gives the distance to a green you have saved, and how far you hit a shot.
             Some apps don't let this page use location; the flag photo works everywhere.</p>
-          <button class="btn btn-primary btn-block" id="gps-start" disabled={gps.state === 'waiting'} onClick={start}>
+          <button class="btn btn-primary btn-block" id="gps-start" disabled={gps.state === 'waiting'} onClick={() => turnOn()}>
             {gps.state === 'waiting' ? 'Finding you…' : gps.state === 'nofix' ? 'Try again' : 'Use my location'}
           </button>
           {gps.state === 'nofix' && <p class="gs-fail" id="gps-nofix" role="status">{gps.message}</p>}
@@ -683,7 +642,9 @@ function GpsPanel({ courseId, hole, onUsePhoto }: { courseId: string; hole: numb
               {ball ? 'Mark again from here' : 'Mark my ball here'}
             </button>
           </div>
-          <p class="rf-basis" id="gps-acc">Your location: ± {accYd} yd. Location stops when you close this.</p>
+          <p class="rf-basis" id="gps-acc">{sharedWithYardage
+            ? `Your location: ± ${accYd} yd. Live yardage keeps location on while you play.`
+            : `Your location: ± ${accYd} yd. Location stops when you close this.`}</p>
         </>
       )}
     </div>

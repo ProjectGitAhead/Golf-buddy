@@ -2,7 +2,7 @@
 // no signal: the page is network-first with a short wait before the cached copy is used, and the cached copy is
 // replaced whenever the network answers, so a stale app is never served for longer than one visit. The icons and
 // the manifest are cache-first. The build fills in the cache version from a hash of the site's files.
-const CACHE = 'golf-buddy-f930ed2c8b58';
+const CACHE = 'golf-buddy-34355d5ba713';
 const WAIT_MS = 3000;
 const ASSETS = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 const scope = self.registration.scope;               // ends in "/": the folder the site is served from
@@ -25,6 +25,8 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
+  // Requests to other sites (the green-position lookup) and anything that is not a GET go straight to the network.
+  if (new URL(req.url).origin !== self.location.origin) return;
   if (req.method !== 'GET' || !req.url.startsWith(scope)) return;
   const path = req.url.slice(scope.length).split(/[?#]/)[0];
   if (req.mode === 'navigate' || path === '' || path === 'index.html') { event.respondWith(page(event)); return; }

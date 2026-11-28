@@ -161,3 +161,18 @@ workflow.
 - [x] README states the owner's three steps and the site URL
 **Verification:** [x] parsers · [x] gate
 **Dependencies:** T5.2 · **Files:** fly.toml, Dockerfile, .dockerignore, deploy/nginx.conf, .github/workflows/fly.yml, .github/workflows/pages.yml, README.md · **Size:** S · **Risk:** none · **Screens:** none
+
+## Phase 6
+
+### T6.1 Live yardage to the hole
+**Description:** Plan section 15: green positions from OpenStreetMap and a live front / centre / back yardage
+panel on the hole screen (hosted copy).
+**Acceptance:**
+- [ ] `greens.ts` unit tests on a fixture: 18 holes matched, a duplicated `ref` resolved by nearest tees, a hole with no green within 60 m reported missing, centroid and outline simplification, front / centre / back distances
+- [ ] e2e (hosted copy, geolocation and the Overpass endpoint mocked by Playwright routing): turn on live yardage, load greens, see "Found 18 of 18 greens", yardage for the current hole matches the fixture within 1 yd, moving the mocked position updates it, next hole shows that hole's yardage
+- [ ] Missing data paths: Overpass failure falls over to the second endpoint once then shows one plain line; an unmapped course shows the learn-as-you-play line; a hand-saved green is kept
+- [ ] One watcher only (spy), paused when hidden; no geolocation or network call before a tap; attribution visible; artifact copy unchanged (panel absent when `window.claude` exists)
+- [ ] Existing gate passes; fragment check allows only the two Overpass endpoints and the attribution link
+**Verification:** [ ] `npm test` (greens) · [ ] `npm run e2e` (spec: yardage) · [ ] typecheck · [ ] build
+**Dependencies:** T5.1, T5.2 · **Files:** src/core/greens.ts (+ test + fixture), src/net/overpass.ts, src/core/types.ts (one optional field), src/ui/components/yardage-panel.tsx, src/ui/location.ts (shared watcher), src/ui/components/distance-sheet.tsx (use the shared watcher), src/ui/screens/play-hole.tsx (mount the panel), src/ui/styles.css (one block at the end), scripts/build.mjs and e2e/fragment.spec.mjs (URL allowance only), scripts/site/sw template (cross-origin pass-through), e2e/yardage.spec.mjs, dist/ · **Size:** M
+**Risk:** none · **Screens:** yardage-live, yardage-no-green, yardage-off

@@ -15,16 +15,33 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
   FLY_ORG: ${{ vars.FLY_ORG || 'personal' }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Check the deploy token exists
+      - name: Read the deploy token
+        env:
+          RAW_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          if [ -z "$FLY_API_TOKEN" ]; then echo "::error::Add the FLY_API_TOKEN repository secret (see README)"; exit 1; fi
+          if [ -z "$RAW_TOKEN" ]; then echo "::error::Add the FLY_API_TOKEN repository secret (see README)"; exit 1; fi
+          CLEAN=$(printf '%s' "$RAW_TOKEN" | tr -d '\r\n\t' | sed -E 's/^ +//; s/ +$//')
+          case "$CLEAN" in FlyV1fm2_*) CLEAN="FlyV1 ${CLEAN#FlyV1}" ;; esac
+          CLEAN=$(printf '%s' "$CLEAN" | sed -E 's/ +/ /g; s/ ?, ?/,/g')
+          if LC_ALL=C printf '%s' "$CLEAN" | LC_ALL=C grep -q '[^ -~]'; then
+            echo "::error::The FLY_API_TOKEN secret contains unexpected characters. Paste the token again as one line."
+            exit 1
+          fi
+          if ! printf '%s' "$CLEAN" | grep -Eq '^(FlyV1 fm[0-9]_|fo1_|fm2_)'; then
+            echo "::error::The FLY_API_TOKEN secret does not look like a Fly token (it should start with FlyV1). Paste the token itself, not a command, as one line."
+            exit 1
+          fi
+          echo "::add-mask::$CLEAN"
+          echo "FLY_API_TOKEN=$CLEAN" >> "$GITHUB_ENV"
+          if [ "$CLEAN" = "$RAW_TOKEN" ]; then CHANGED=no; else CHANGED=yes; fi
+          echo "Cleaning changed the token: $CHANGED"
+          echo "Cleaned token length: ${#CLEAN}"
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -38,7 +55,30 @@ jobs:
       - name: Create the app if it does not exist yet
         run: |
           APP=$(sed -n 's/^app = "\(.*\)"/\1/p' fly.toml)
-          if ! flyctl status --app "$APP" >/dev/null 2>&1; then
-            flyctl apps create "$APP" --org "$FLY_ORG"
+          case "$FLY_API_TOKEN" in
+            "FlyV1 "*) AUTH="$FLY_API_TOKEN" ;;
+            *) AUTH="Bearer $FLY_API_TOKEN" ;;
+          esac
+          GET_BODY=$(mktemp)
+          POST_BODY=$(mktemp)
+          GET_CODE=$(curl -sS --max-time 30 -o "$GET_BODY" -w '%{http_code}' \
+            -H "Authorization: $AUTH" "https://api.machines.dev/v1/apps/$APP") || GET_CODE=000
+          if [ "$GET_CODE" = "200" ]; then
+            echo "App exists"
+            exit 0
           fi
+          PAYLOAD=$(jq -n --arg app "$APP" --arg org "$FLY_ORG" '{app_name: $app, org_slug: $org}')
+          POST_CODE=$(curl -sS --max-time 30 -o "$POST_BODY" -w '%{http_code}' \
+            -X POST -H "Authorization: $AUTH" -H "Content-Type: application/json" \
+            -d "$PAYLOAD" "https://api.machines.dev/v1/apps") || POST_CODE=000
+          if [ "$POST_CODE" = "200" ] || [ "$POST_CODE" = "201" ]; then
+            echo "App created"
+            exit 0
+          fi
+          echo "Lookup HTTP $GET_CODE:"
+          cat "$GET_BODY"; echo
+          echo "Create HTTP $POST_CODE:"
+          cat "$POST_BODY"; echo
+          echo "::error::Could not find or create the Fly app $APP (lookup HTTP $GET_CODE, create HTTP $POST_CODE). If the token is valid, set the repository variable FLY_ORG to your Fly organisation's slug (shown in the Fly dashboard URL). See README, Hosted copy."
+          exit 1
       - run: flyctl deploy --remote-only --ha=false

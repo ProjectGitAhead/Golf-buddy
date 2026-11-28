@@ -6,6 +6,7 @@ import { useStore } from '../../store/use-store';
 import { Icon } from '../components/common';
 import { ApproachControl } from '../components/green-sheet';
 import { DistanceControl } from '../components/distance-sheet';
+import { YardagePanel } from '../components/yardage-panel';
 import { formatToPar, holeFacts, scoreMark, scoreName, totals, type HoleFacts } from '../round';
 
 export function HoleEntry({ round, onFinish }: { round: Round; onFinish: () => void }) {
@@ -35,6 +36,7 @@ export function HoleEntry({ round, onFinish }: { round: Round; onFinish: () => v
         <button class="btn-text" id="open-scorecard" onClick={onFinish}>Scorecard</button>
       </div>
       <HoleHeader f={f} hasIndex={round.courseHandicap !== null} si={gender === 'W' ? f.hole.strokeIndexW ?? f.hole.strokeIndex : f.hole.strokeIndex} />
+      <YardagePanel courseId={round.courseId} hole={f.hole.number} />
       <Strip facts={facts} current={idx} onPick={go} />
       <div class="running">
         <span id="running-thru">{t.thru ? `Thru ${t.thru}` : 'No holes yet'}</span>

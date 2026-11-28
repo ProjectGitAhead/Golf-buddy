@@ -25,6 +25,8 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
+  // Requests to other sites (the green-position lookup) and anything that is not a GET go straight to the network.
+  if (new URL(req.url).origin !== self.location.origin) return;
   if (req.method !== 'GET' || !req.url.startsWith(scope)) return;
   const path = req.url.slice(scope.length).split(/[?#]/)[0];
   if (req.mode === 'navigate' || path === '' || path === 'index.html') { event.respondWith(page(event)); return; }

@@ -35,6 +35,9 @@ Owner's three steps (once):
 
 1. Create a Fly deploy token (`fly tokens create org`, or the Fly dashboard > Tokens).
 2. Add it as the GitHub repo secret `FLY_API_TOKEN` (Settings > Secrets and variables > Actions).
+   If the app does not exist yet the workflow tries to create it, which needs an organisation token and the repository
+   variable `FLY_ORG` set to your organisation's slug (`fly orgs list`; default `personal`). Otherwise create the app
+   once yourself (`fly apps create projectgitahead-golf-buddy`) and use a token that covers it.
 3. Merge to `main`. `.github/workflows/fly.yml` then builds, creates the app if needed and deploys.
 
 - `npm run build` writes `dist/site/` (page, manifest, icons, `sw.js`) from `scripts/site/`. The `Dockerfile` serves
