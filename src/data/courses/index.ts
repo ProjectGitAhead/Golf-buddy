@@ -27,7 +27,33 @@ export function mergeGreens(c: Course, file: GreensFile | undefined): Course {
   };
 }
 
-const bundledGreens: Record<string, GreensFile> = { 'rancho-solano': ranchoSolanoGreens as GreensFile };
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+/** A greens file read from JSON, checked: a point that is not two finite numbers is dropped, and so is a hole whose
+ *  green centre is not two finite numbers. JSON gives `number[][]`, so this is where it becomes `[number, number][]`. */
+export function toGreensFile(raw: unknown): GreensFile {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as { fetchedAt?: unknown; source?: unknown; holes?: unknown };
+  const holes: GreensFile['holes'] = {};
+  if (r.holes && typeof r.holes === 'object') {
+    for (const [n, v] of Object.entries(r.holes as Record<string, unknown>)) {
+      const h = (v && typeof v === 'object' ? v : {}) as { green?: { lat?: unknown; lon?: unknown }; greenShape?: unknown };
+      const lat = h.green?.lat, lon = h.green?.lon;
+      if (!finite(lat) || !finite(lon)) continue;
+      const shape = Array.isArray(h.greenShape) ? h.greenShape : [];
+      const greenShape = shape
+        .filter((p): p is [number, number] => Array.isArray(p) && p.length === 2 && finite(p[0]) && finite(p[1]))
+        .map((p) => [p[0], p[1]] as [number, number]);
+      holes[n] = { green: { lat, lon }, greenShape };
+    }
+  }
+  return {
+    fetchedAt: typeof r.fetchedAt === 'string' ? r.fetchedAt : null,
+    source: typeof r.source === 'string' ? r.source : null,
+    holes,
+  };
+}
+
+const bundledGreens: Record<string, GreensFile> = { 'rancho-solano': toGreensFile(ranchoSolanoGreens) };
 
 // The page must hold no URL text (plan section 2), so source links are kept as bare host/path text.
 function bundled(c: Course): Course {

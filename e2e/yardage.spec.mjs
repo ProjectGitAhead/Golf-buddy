@@ -2,7 +2,7 @@
 // by Playwright, and the OpenStreetMap Overpass servers by routing (the hand-built fixture in src/core/greens.fixture.json
 // stands in for their answer). 390 px phone, light and dark. Expected yards are worked out here independently of the app.
 import { mkdirSync, readFileSync } from 'node:fs';
-import { assert, eq, noHorizontalScroll, rancho, startRound, text } from './lib.mjs';
+import { addCourse, assert, eq, handAdded, noHorizontalScroll, rancho, startRound, text } from './lib.mjs';
 import { bundle } from '../scripts/build.mjs';
 import { fetchGreens, loadLib } from '../scripts/fetch-greens.mjs';
 
@@ -19,6 +19,14 @@ const TEE1 = { latitude: 38.26, longitude: -122.03 };
 const M_PER_DEG = 6_371_008.8 * Math.PI / 180;
 const xy = (o, p) => ({ x: (p.lon - o.lon) * M_PER_DEG * Math.cos(o.lat * Math.PI / 180), y: (p.lat - o.lat) * M_PER_DEG });
 const toYd = (m) => m / 0.9144;
+const R = 6_371_008.8;
+/** Great-circle distance in metres. */
+function haversine(a, b) {
+  const r = (d) => d * Math.PI / 180;
+  const s = Math.sin(r(b.latitude - a.latitude) / 2) ** 2
+    + Math.cos(r(a.latitude)) * Math.cos(r(b.latitude)) * Math.sin(r(b.longitude - a.longitude) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
 /** The fixture's own hole line for hole n on the main course (west of -122.02), and its green ring. */
 function fixtureGreen(n) {
   const line = ELEMENTS.find((e) => e.tags?.golf === 'hole' && Number(e.tags.ref) === n && e.geometry[0].lon < -122.02);
@@ -116,13 +124,13 @@ async function servers(context, calls, ...plan) {
 
 const geoCount = (page) => page.evaluate(() => window.__geo);
 const shot = (page, name, dark) => page.screenshot({ path: `${SHOTS}/yardage-${name}-${dark ? 'dark' : 'light'}.png` });
-const stored = (page, n) => page.evaluate(([k, h]) => {
+const stored = (page, n) => page.evaluate(([k, h, id]) => {
   const d = JSON.parse(localStorage.getItem(k)).data;
   const r = Object.values(d.rounds).find((x) => x.status === 'active');
-  const c = d.courses['rancho-solano']?.holes.find((x) => x.number === h);
+  const c = d.courses[id]?.holes.find((x) => x.number === h);
   return { green: c?.green ?? null, shape: c?.greenShape ?? null, par: c?.par, si: c?.strokeIndex,
     snapshot: r.snapshot.holes.find((x) => x.number === h) };
-}, [KEY, n]);
+}, [KEY, n, handAdded.id]);
 async function hidePage(page, hidden) {
   await page.evaluate((h) => {
     Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => (h ? 'hidden' : 'visible') });
@@ -136,7 +144,8 @@ async function live(browser, baseURL, dark) {
   const { page, context, errors, calls } = await phone(browser, baseURL, { dark });
   try {
     await servers(context, calls, 'ok');
-    await startRound(page, {});
+    await addCourse(page);                 // a course of his own: no bundled greens (Rancho Solano ships with them)
+    await startRound(page, { courseId: handAdded.id });
     // Off until a tap: no location, no network.
     await page.waitForSelector('#yardage[data-state="off"]');
     eq(await text(page, '#yardage-on'), 'Turn on live yardage', 'turn-on button');
@@ -275,7 +284,8 @@ async function failover(browser, baseURL) {
   let { page, context, errors, calls } = await phone(browser, baseURL);
   try {
     await servers(context, calls, 'abort', 503, 'ok', 'ok');
-    await startRound(page, {});
+    await addCourse(page);
+    await startRound(page, { courseId: handAdded.id });
     await page.click('#yardage-on');
     await page.click('#yardage-load');
     await page.waitForSelector('#yardage-found');
@@ -295,7 +305,8 @@ async function failover(browser, baseURL) {
     ({ page, context, errors, calls } = await phone(browser, baseURL));
     try {
       await servers(context, calls, ...plan);
-      await startRound(page, {});
+      await addCourse(page);
+      await startRound(page, { courseId: handAdded.id });
       await page.click('#yardage-on');
       await page.click('#yardage-load');
       await page.waitForSelector('#yardage-load-failed');
@@ -348,11 +359,41 @@ async function bundledGreens(browser, baseURL) {
   } finally { await context.close(); }
 }
 
+async function shippedRancho(browser, baseURL) {
+  // The hosted copy as built, with the real greens file committed for Rancho Solano: live yardage on hole 10 with no
+  // lookup step and no network call. G10 is hole 10's green centre in that file.
+  const G10 = { latitude: 38.285851, longitude: -122.072896 };
+  const { page, context, errors, calls } = await phone(browser, baseURL, { geo: G10 });
+  try {
+    await servers(context, calls, 'ok');
+    await startRound(page, { holes: 'B9' });
+    await page.waitForSelector('#hole-screen[data-hole="10"]');
+    await page.click('#yardage-on');
+    await page.waitForSelector('#yardage[data-state="live"]');
+    eq(await page.locator('#yardage-load').count(), 0, 'no "Load green positions" step on Rancho Solano');
+    const atPin = Number(await text(page, '#yardage-centre'));
+    assert(atPin >= 0 && atPin <= 1, `hole 10 middle at the green centre: ${atPin} yd`);
+    assert((await text(page, '#yardage-osm')).includes('Green positions © OpenStreetMap contributors'), 'attribution shown');
+    // About 150 yd short of the green, due south.
+    const P = { latitude: G10.latitude - 150 * 0.9144 / (R * Math.PI / 180), longitude: G10.longitude };
+    const want = toYd(haversine(P, G10));
+    assert(Math.abs(want - 150) < 1, `test point is ${want.toFixed(1)} yd out`);
+    await context.setGeolocation({ ...P, accuracy: 4 });
+    await page.waitForFunction((w) => Math.abs(Number(document.querySelector('#yardage-centre')?.textContent) - w) <= 2,
+      want, { timeout: 4000 }).catch(async () => {
+      throw new Error(`hole 10 middle from 150 yd: shows ${await text(page, '#yardage-centre')}, expected ${want.toFixed(1)} (within 2 yd)`);
+    });
+    eq(calls.main + calls.spare + calls.other.length, 0, `no network call (${calls.other.join(' ')})`);
+    eq(errors.length, 0, `page errors: ${errors.join(' | ')}`);
+  } finally { await context.close(); }
+}
+
 async function unmapped(browser, baseURL) {
   const { page, context, errors, calls } = await phone(browser, baseURL);
   try {
     await servers(context, calls, 'empty');
-    await startRound(page, {});
+    await addCourse(page);
+    await startRound(page, { courseId: handAdded.id });
     await page.click('#yardage-on');
     await page.click('#yardage-load');
     await page.waitForSelector('#yardage-unmapped');
@@ -371,9 +412,10 @@ async function handSavedKept(browser, baseURL) {
   // The service worker is left on here: it must let the lookup through to the network (and Playwright's routing).
   const { page, context, errors, calls } = await phone(browser, baseURL, { serviceWorkers: 'allow' });
   try {
+    await addCourse(page);
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null, null, { timeout: 10_000 });
     await servers(context, calls, 'ok');
-    await startRound(page, {});
+    await startRound(page, { courseId: handAdded.id });
     await page.click('#yardage-on');
     await page.waitForSelector('#yardage-save-pin');
     await page.click('#yardage-save-pin');              // his own pin for hole 1, at the first tee
@@ -454,6 +496,7 @@ export default async function ({ browser, baseURL }) {
   await live(browser, baseURL, true);
   await failover(browser, baseURL);
   await bundledGreens(browser, baseURL);
+  await shippedRancho(browser, baseURL);
   await unmapped(browser, baseURL);
   await handSavedKept(browser, baseURL);
   await laterVisitNotGranted(browser, baseURL);

@@ -6,7 +6,7 @@ import * as overpass from '../../net/overpass';
 import type { Course } from '../../core/types';
 import ranchoSolano from './rancho-solano.json';
 import shippedGreens from './rancho-solano.greens.json';
-import { bundledCourses, findCourse, mergeGreens, type GreensFile } from '.';
+import { bundledCourses, findCourse, mergeGreens, toGreensFile, type GreensFile } from '.';
 
 const lib = { matchGreens: greens.matchGreens, runQuery: overpass.runQuery, overpassQuery: overpass.overpassQuery, host: overpass.host };
 const FIXTURE = JSON.stringify(fixture);
@@ -50,10 +50,47 @@ describe('bundled greens merge', () => {
   });
 
   it("the user's own copy of a bundled course gets the bundled greens through findCourse", () => {
-    const shipped = shippedGreens as GreensFile;
+    const shipped = toGreensFile(shippedGreens);
     const mine = course();
     mine.holes[0] = { ...mine.holes[0], par: 4 };
     expect(findCourse('rancho-solano', { 'rancho-solano': mine })).toEqual(mergeGreens(mine, shipped));
+  });
+});
+
+describe('toGreensFile', () => {
+  it('keeps a well-formed file as it is', () => {
+    expect(toGreensFile(JSON.parse(JSON.stringify(file)))).toEqual({ ...file, holes: { '1': file.holes[1], '2': file.holes[2] } });
+  });
+
+  it('drops points that are not two finite numbers, and holes with no usable centre', () => {
+    const raw = {
+      fetchedAt: 5, source: 'x',
+      holes: {
+        1: { green: { lat: 1, lon: 2 }, greenShape: [[1, 2], [1], [1, 2, 3], ['1', 2], [null, 2], [1, 3], 'p', [2, 3]] },
+        2: { green: { lat: 'a', lon: 4 }, greenShape: [[3, 4]] },
+        3: { green: { lat: 5, lon: 6 } },
+        4: null,
+      },
+    };
+    raw.holes[1].greenShape.push([Number.NaN, 1], [1, Infinity]);
+    expect(toGreensFile(raw)).toEqual({
+      fetchedAt: null, source: 'x',
+      holes: { 1: { green: { lat: 1, lon: 2 }, greenShape: [[1, 2], [1, 3], [2, 3]] }, 3: { green: { lat: 5, lon: 6 }, greenShape: [] } },
+    });
+  });
+
+  it('anything that is not a greens file reads as an empty one', () => {
+    for (const raw of [undefined, null, 3, 'x', [], { holes: 'no' }]) {
+      expect(toGreensFile(raw)).toEqual({ fetchedAt: null, source: null, holes: {} });
+    }
+  });
+
+  it('the shipped file reads with every point kept (however many holes it has)', () => {
+    const t = toGreensFile(shippedGreens);
+    expect(Object.keys(t.holes)).toEqual(Object.keys(shippedGreens.holes));
+    for (const [n, h] of Object.entries(t.holes)) {
+      expect(h.greenShape).toHaveLength((shippedGreens.holes as Record<string, { greenShape: unknown[] }>)[n].greenShape.length);
+    }
   });
 });
 

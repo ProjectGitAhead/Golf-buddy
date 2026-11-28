@@ -14,6 +14,24 @@ export function loadPlaywright() {
 
 export const rancho = JSON.parse(readFileSync(new URL('../src/data/courses/rancho-solano.json', import.meta.url), 'utf8'));
 
+/** A course the user added by hand (same holes and tees as Rancho Solano, its own id): no greens file is bundled for
+ *  it, so it starts with no green positions. Used where a spec needs the no-green, lookup or hand-save paths. */
+export const handAdded = { ...structuredClone(rancho), id: 'hand-added-test', name: 'Hand Added Test Course',
+  updatedAt: '2026-01-01T00:00:00.000Z' };
+
+/** Saves `course` as one of the user's own courses, in the app's stored shape, and reloads so the app reads it. */
+export async function addCourse(page, course = handAdded) {
+  await page.evaluate(([k, c]) => {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(k) ?? 'null'); } catch { /* start fresh */ }
+    s ??= { data: { profile: null, rounds: {}, courses: {}, imports: {} }, tombstones: {} };
+    s.data.courses[c.id] = c;
+    localStorage.setItem(k, JSON.stringify(s));
+  }, ['golf-buddy:v1', course]);
+  await page.reload();
+  await page.waitForSelector('.app');
+}
+
 export function assert(cond, msg) {
   if (!cond) throw new Error(msg);
 }

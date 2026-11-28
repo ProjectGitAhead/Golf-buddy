@@ -2,7 +2,7 @@
 // zoom and its toggle, no EXIF, an unreadable file), zoom / pan / pinch / drag with the loupe, the flagstick setting; GPS with a
 // mocked position (save a green, move, measure a shot) and with location refused. 390 px phone, light and dark.
 import { mkdirSync } from 'node:fs';
-import { assert, eq, noHorizontalScroll, startRound, text } from './lib.mjs';
+import { addCourse, assert, eq, handAdded, noHorizontalScroll, startRound, text } from './lib.mjs';
 
 const KEY = 'golf-buddy:v1';
 const SHOTS = process.env.REVIEW_DIR
@@ -297,17 +297,19 @@ async function darkShots(browser, baseURL) {
 }
 
 const START = { latitude: 38.25, longitude: -122.04 };
-const courseHole = (page, n) => page.evaluate(([k, h]) => {
+const courseHole = (page, n) => page.evaluate(([k, h, id]) => {
   const d = JSON.parse(localStorage.getItem(k)).data;
   const r = Object.values(d.rounds).find((x) => x.status === 'active');
-  return { green: d.courses['rancho-solano']?.holes.find((x) => x.number === h)?.green ?? null,
+  return { green: d.courses[id]?.holes.find((x) => x.number === h)?.green ?? null,
     snapshotGreen: r.snapshot.holes.find((x) => x.number === h)?.green ?? null };
-}, [KEY, n]);
+}, [KEY, n, handAdded.id]);
 
 async function gps(browser, baseURL, dark) {
   const { page, context, errors } = await phone(browser, baseURL, { geo: { ...START, accuracy: 4 }, dark });
   try {
-    await startRound(page, {});
+    // A course of his own with no green positions (Rancho Solano ships with greens).
+    await addCourse(page);
+    await startRound(page, { courseId: handAdded.id });
     await openSheet(page);
     await page.click('#distance-mode-gps');
     eq((await page.evaluate(() => window.__geo)).watch, 0, 'no geolocation call before the tap');
