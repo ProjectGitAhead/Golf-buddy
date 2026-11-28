@@ -30,11 +30,13 @@ padding-block:16px}
 .gb-title{margin:0;font-size:1.5rem;color:var(--accent)}
 `;
 
-// The only addresses the app may contact (plan section 15.1): the two OpenStreetMap Overpass servers, tried in that
-// order from a tap in the hosted copy, and the attribution link shown beside map-based yardage.
+// The only addresses the app may contact (plan sections 15.1 and 15.3): the four OpenStreetMap Overpass servers,
+// tried in this order from a tap in the hosted copy, and the attribution link shown beside map-based yardage.
 export const ALLOWED_URLS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://www.openstreetmap.org/copyright',
 ];
 
@@ -52,8 +54,19 @@ export function strayUrls(text) {
     && !/^http:\/\/www\.w3\.org\/(1998\/Math\/MathML|1999\/xhtml|2000\/svg|1999\/xlink|XML\/1998\/namespace)$/.test(u));
 }
 
-async function bundle() {
+/** The app script. `greens` (tests only) replaces bundled greens files: { [courseId]: greens file contents }. */
+export async function bundle({ greens } = {}) {
+  const plugins = greens ? [{
+    name: 'greens-override',
+    setup(b) {
+      b.onLoad({ filter: /[\\/]src[\\/]data[\\/]courses[\\/][a-z0-9-]+\.greens\.json$/ }, (args) => {
+        const id = args.path.replace(/^.*[\\/]/, '').replace('.greens.json', '');
+        return greens[id] ? { contents: JSON.stringify(greens[id]), loader: 'json' } : undefined;
+      });
+    },
+  }] : [];
   const result = await build({
+    plugins,
     entryPoints: [join(root, 'src/main.tsx')],
     bundle: true,
     minify: true,

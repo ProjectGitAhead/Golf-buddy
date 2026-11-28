@@ -6,9 +6,14 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy to Fly after building
+        type: boolean
+        default: true
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: fly-deploy
@@ -50,9 +55,56 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Bake in green positions from OpenStreetMap (never fails the job)
+        continue-on-error: true
+        run: node scripts/fetch-greens.mjs rancho-solano || true
+      - name: Save green positions to the repository
+        continue-on-error: true
+        run: |
+          F=src/data/courses/rancho-solano.greens.json
+          if git diff --quiet -- "$F"; then
+            echo "Green positions unchanged, nothing to save"
+            exit 0
+          fi
+          HOLES='try{const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(JSON.stringify(j.holes||{}))}catch(e){console.log("{}")}'
+          COUNT='console.log(Object.keys(JSON.parse(require("fs").readFileSync(0,"utf8"))).length)'
+          NEW_HOLES=$(node -e "$HOLES" < "$F")
+          OLD_HOLES=$(git show "HEAD:$F" | node -e "$HOLES")
+          if [ "$NEW_HOLES" = "$OLD_HOLES" ]; then
+            git checkout -- "$F"
+            echo "Green positions unchanged, nothing to save"
+            exit 0
+          fi
+          NEW=$(printf '%s' "$NEW_HOLES" | node -e "$COUNT")
+          OLD=$(printf '%s' "$OLD_HOLES" | node -e "$COUNT")
+          if [ "$NEW" -lt "$OLD" ]; then
+            git checkout -- "$F"
+            echo "Kept the existing green positions file because the new one has fewer holes ($NEW, was $OLD)"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$F"
+          git commit -m "Update Rancho Solano green positions from OpenStreetMap" -- "$F"
+          if git push origin HEAD:${{ github.ref_name }}; then
+            echo "Saved green positions for $NEW holes to the repository"
+          else
+            echo "Push failed, green positions were not saved (the deploy continues)"
+          fi
       - run: npm run build
+      - name: Check green positions are available
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
+        run: |
+          F=src/data/courses/rancho-solano.greens.json
+          N=$(node -e 'try{console.log(Object.keys(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).holes||{}).length)}catch(e){console.log(0)}' "$F")
+          if [ "$N" -eq 0 ]; then
+            echo "::error::No green positions are available for Rancho Solano (the map lookup failed and none are saved in the repository). Not deploying, so the live site keeps its current data."
+            exit 1
+          fi
       - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
       - name: Create the app if it does not exist yet
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         run: |
           APP=$(sed -n 's/^app = "\(.*\)"/\1/p' fly.toml)
           case "$FLY_API_TOKEN" in
@@ -82,3 +134,4 @@ jobs:
           echo "::error::Could not find or create the Fly app $APP (lookup HTTP $GET_CODE, create HTTP $POST_CODE). If the token is valid, set the repository variable FLY_ORG to your Fly organisation's slug (shown in the Fly dashboard URL). See README, Hosted copy."
           exit 1
       - run: flyctl deploy --remote-only --ha=false
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}

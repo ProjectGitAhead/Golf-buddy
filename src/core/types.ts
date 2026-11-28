@@ -16,6 +16,7 @@ export interface Course {
   tees: Tee[];
   sources?: string[]; verified: boolean; updatedAt: string;
 }
+export interface Course { location?: { lat: number; lon: number } }  // 15.3: where the build looks up its greens
 export type FairwayResult = 'hit' | 'left' | 'right' | 'short' | 'long';
 export interface ApproachMark {     // where the ball finished relative to the pin, seen from where it was hit
   xFt: number;                      // + right of the pin, - left

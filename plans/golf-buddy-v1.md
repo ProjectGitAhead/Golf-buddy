@@ -373,3 +373,21 @@ granted, never by hostname). In the Claude artifact nothing changes.
 - A screen wake lock is requested while yardage is live and released when it stops (rejection tolerated).
 - Yardage updates must not re-render the whole hole screen (score entry stays responsive).
 - The service worker ignores cross-origin requests.
+
+### 15.3 Green lookup failed on the course (owner's screenshot, 2026-11-28, hole 10: "Couldn't load green positions")
+
+Both Overpass endpoints failed from his phone; the reason is unknown and this container cannot reach them.
+- **Bake greens in at build time.** `scripts/fetch-greens.mjs <courseId>`: for a bundled course with a
+  `location: { lat, lon }` (new optional `Course` field; Rancho Solano: 3250 Rancho Solano Parkway, Fairfield,
+  about 38.288, -122.078), query Overpass from the build machine (2,500 m radius, endpoints tried in order,
+  25 s each), match with `src/core/greens.ts`, and write `src/data/courses/<courseId>.greens.json`
+  (`{ fetchedAt, source, holes: { [n]: { green, greenShape } } }`). It prints, per endpoint, the HTTP status or
+  error, then "Matched N of 18" and the missing holes. It never fails the build: on any error it leaves an
+  existing greens file untouched and exits 0. `src/data/courses/index.ts` merges a greens file into the
+  bundled course's holes, so Rancho Solano has yardage with no lookup. The Fly workflow runs the script before
+  `npm run build`.
+- **Sturdier lookup in the app.** Endpoints in order: `overpass-api.de`, `overpass.private.coffee`,
+  `overpass.kumi.systems`, `maps.mail.ru/osm/tools/overpass` (each `/api/interpreter`); 25 s each; stop at the
+  first good answer. The failure line names the reason in plain words: no connection, the map service is busy
+  (with the status), or it took too long. The fragment URL allowance grows to exactly these four endpoints.
+- A hand-saved green still wins over a bundled or looked-up one.
