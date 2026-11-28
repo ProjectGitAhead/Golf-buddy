@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: fly-deploy
@@ -53,6 +53,30 @@ jobs:
       - name: Bake in green positions from OpenStreetMap (never fails the job)
         continue-on-error: true
         run: node scripts/fetch-greens.mjs rancho-solano || true
+      - name: Save green positions to the repository
+        continue-on-error: true
+        run: |
+          F=src/data/courses/rancho-solano.greens.json
+          if git diff --quiet -- "$F"; then
+            echo "Green positions unchanged, nothing to save"
+            exit 0
+          fi
+          COUNT='try{const j=JSON.parse(require("fs").readFileSync(0,"utf8"));console.log(Object.keys(j.holes||{}).length)}catch(e){console.log(0)}'
+          NEW=$(node -e "$COUNT" < "$F")
+          OLD=$(git show "HEAD:$F" | node -e "$COUNT")
+          if [ "$NEW" -lt "$OLD" ]; then
+            echo "Kept the existing green positions file because the new one has fewer holes ($NEW, was $OLD)"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- "$F"
+          git commit -m "Update Rancho Solano green positions from OpenStreetMap" -- "$F"
+          if git push origin HEAD:${{ github.ref_name }}; then
+            echo "Saved green positions for $NEW holes to the repository"
+          else
+            echo "Push failed, green positions were not saved (the deploy continues)"
+          fi
       - run: npm run build
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Create the app if it does not exist yet
