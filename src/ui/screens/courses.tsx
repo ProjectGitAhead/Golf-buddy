@@ -1,4 +1,5 @@
-// Courses tab: list, detail (tees, ratings, hole table) and the hand editor.
+// Courses tab: list, detail (tees, ratings, hole table, green positions) and the hand editor, opened empty, from a
+// scorecard scan or from "Find a course".
 import { useRef, useState } from 'preact/hooks';
 import type { Course } from '../../core/types';
 import { allCourses, findCourse, isBundledCourse } from '../../data/courses';
@@ -8,9 +9,11 @@ import { teeYards } from '../round';
 import { downscalePhoto } from '../../vision/photo';
 import { readScorecard, scanFailureLine, type SampleFn, type ScanResult } from '../../vision/scorecard';
 import { CourseEditor, type CourseForm } from './courses-editor';
+import { ATTRIBUTION } from '../../net/course-search';
+import { CourseGreens, FindCourseSlot, hosted } from './courses-find';
 
-type View = { name: 'list' } | { name: 'detail'; id: string }
-  | { name: 'edit'; id: string | null; draft?: CourseForm; flags?: Record<string, string>; notice?: string };
+type View = { name: 'list' } | { name: 'detail'; id: string; loadGreens?: boolean }
+  | { name: 'edit'; id: string | null; draft?: CourseForm; flags?: Record<string, string>; notice?: string; origin?: 'scan' | 'data' };
 
 export function Courses({ onPlay }: { onPlay: (courseId: string) => void }) {
   const store = useStore();
@@ -20,16 +23,19 @@ export function Courses({ onPlay }: { onPlay: (courseId: string) => void }) {
 
   if (view.name === 'edit') {
     const existing = view.id ? findCourse(view.id, store.data.courses) : undefined;
+    // A found course with a map location: the Save tap also looks up its greens (around the course, not the phone).
+    const greensOnSave = view.origin === 'data' && !!view.draft?.location && hosted();
     return (
-      <CourseEditor course={existing} draft={view.draft} flags={view.flags} notice={view.notice}
+      <CourseEditor course={existing} draft={view.draft} flags={view.flags} notice={view.notice} origin={view.origin}
+        saveHint={greensOnSave ? "Saving also loads this course's green positions from OpenStreetMap, which gets the course's rough location." : undefined}
         onCancel={() => show(view.id ? { name: 'detail', id: view.id } : { name: 'list' })}
-        onSaved={(c) => { store.saveCourse(c); show({ name: 'detail', id: c.id }); }} />
+        onSaved={(c) => { store.saveCourse(c); show({ name: 'detail', id: c.id, loadGreens: greensOnSave }); }} />
     );
   }
   if (view.name === 'detail') {
     const course = findCourse(view.id, store.data.courses);
     if (course) {
-      return <CourseDetail course={course} onBack={() => show({ name: 'list' })} onEdit={() => show({ name: 'edit', id: course.id })}
+      return <CourseDetail course={course} loadGreens={view.loadGreens} onBack={() => show({ name: 'list' })} onEdit={() => show({ name: 'edit', id: course.id })}
         onPlay={() => onPlay(course.id)} onRemoved={() => show({ name: 'list' })} />;
     }
   }
@@ -54,7 +60,8 @@ export function Courses({ onPlay }: { onPlay: (courseId: string) => void }) {
         ))}
       </ul>
       <div class="stack" style="margin-top:14px">
-        <ScanScorecardSlot
+        {hosted() && <FindCourseSlot onFound={(d) => show({ name: 'edit', id: null, draft: d.form, flags: d.flags, origin: 'data' })} />}
+        <ScanScorecardSlot quiet={hosted()}
           onScanned={(r) => show({ name: 'edit', id: null, draft: r.form, flags: r.flags })}
           onFailed={(notice) => show({ name: 'edit', id: null, notice })} />
         <button class="btn btn-line btn-block" id="add-course" onClick={() => show({ name: 'edit', id: null })}>Add a course by hand</button>
@@ -73,7 +80,7 @@ type ScanState =
  * "Scan a scorecard" (plan section 9): one or two photos of the card go to Claude through the `sample` capability;
  * the answer opens in the course editor marked "Check against the card". The photos stay in memory only.
  */
-function ScanScorecardSlot({ onScanned, onFailed }: { onScanned: (r: ScanResult) => void; onFailed: (line: string) => void }) {
+function ScanScorecardSlot({ onScanned, onFailed, quiet }: { onScanned: (r: ScanResult) => void; onFailed: (line: string) => void; quiet?: boolean }) {
   const [st, setSt] = useState<ScanState>({ step: 'idle' });
   const ctl = useRef<AbortController | null>(null);
 
@@ -123,7 +130,7 @@ function ScanScorecardSlot({ onScanned, onFailed }: { onScanned: (r: ScanResult)
 
   if (st.step === 'idle' || st.step === 'opening') {
     return (
-      <button class="btn btn-primary btn-block" id="scan-card" disabled={st.step === 'opening'} onClick={() => void open()}>
+      <button class={`btn ${quiet ? 'btn-line' : 'btn-primary'} btn-block`} id="scan-card" disabled={st.step === 'opening'} onClick={() => void open()}>
         {st.step === 'opening' ? 'Opening the scanner…' : 'Scan a scorecard'}</button>
     );
   }
@@ -170,8 +177,8 @@ function ScanScorecardSlot({ onScanned, onFailed }: { onScanned: (r: ScanResult)
   );
 }
 
-function CourseDetail({ course, onBack, onEdit, onPlay, onRemoved }: {
-  course: Course; onBack: () => void; onEdit: () => void; onPlay: () => void; onRemoved: () => void;
+function CourseDetail({ course, loadGreens, onBack, onEdit, onPlay, onRemoved }: {
+  course: Course; loadGreens?: boolean; onBack: () => void; onEdit: () => void; onPlay: () => void; onRemoved: () => void;
 }) {
   const store = useStore();
   const [confirm, setConfirm] = useState(false);
@@ -230,10 +237,13 @@ function CourseDetail({ course, onBack, onEdit, onPlay, onRemoved }: {
         </table>
       </div>
 
+      <CourseGreens course={course} auto={loadGreens} />
+
       {course.sources && course.sources.length > 0 && (
         <>
           <h2 class="h2">Sources</h2>
-          <ul class="sources">{course.sources.map((s) => <li>{s}</li>)}</ul>
+          <ul class="sources" id="course-sources">{course.sources.map((s) => <li>{s}</li>)}</ul>
+          {course.sources.some((s) => s.startsWith('OpenGolfAPI')) && <p class="find-attr" id="course-attribution">{ATTRIBUTION}</p>}
         </>
       )}
 

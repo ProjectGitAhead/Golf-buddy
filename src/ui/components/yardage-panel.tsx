@@ -10,7 +10,7 @@ import { applyGreens, isHandSaved, matchGreens, type FoundGreen } from '../../co
 import { hazardLine, holeYards } from '../../core/line-of-play';
 import type { Course } from '../../core/types';
 import { findCourse } from '../../data/courses';
-import { failureLine, loadGolfFeatures, OSM_COPYRIGHT_URL, OverpassError } from '../../net/overpass';
+import { failureLine, fitCourse, loadGolfFeatures, OSM_COPYRIGHT_URL, OverpassError } from '../../net/overpass';
 import { useStore } from '../../store/use-store';
 import {
   onForYardage, permissionGranted, rememberYardage, turnOff, turnOn, useLocation, yardageRemembered, type Fix,
@@ -196,7 +196,7 @@ function Loader({ course, fix, load, setLoad, pin }: { course: Course; fix: Fix;
     if (load.s !== 'found') return;
     // Read the latest copy of the course: a green may have been saved by hand since the load.
     const latest = findCourse(course.id, store.data.courses) ?? course;
-    store.saveCourse(applyGreens(latest, load.greens, replaceMine));
+    store.saveCourse(fitCourse(applyGreens(latest, load.greens, replaceMine)).course);   // stays under the db's document limit
     setLoad({ s: 'saved', count: load.greens.size - (replaceMine ? 0 : load.mine.length) });
   };
 

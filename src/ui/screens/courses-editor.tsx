@@ -1,4 +1,5 @@
-// Course editor: add or edit a course by hand. The scorecard scan opens this same editor with a draft and flags.
+// Course editor: add or edit a course by hand. The scorecard scan and "Find a course" open this same editor with a draft
+// and flags.
 import { useState } from 'preact/hooks';
 import type { Course, Gender, Hole, Tee } from '../../core/types';
 import { newId } from '../round';
@@ -11,6 +12,9 @@ export interface CourseForm {
   siW?: string[];
   tees: TeeForm[];
   verified: boolean;
+  /** Carried, not edited: where the course is (from course data; greens are looked up around it), and its sources. */
+  location?: { lat: number; lon: number };
+  sources?: string[];
 }
 
 const N = 18;
@@ -83,6 +87,8 @@ export function validateCourseForm(f: CourseForm, original?: Course): { errors: 
     if (siW) h.strokeIndexW = siW[i];
     else if (prev?.strokeIndexW !== undefined) h.strokeIndexW = prev.strokeIndexW;
     if (prev?.green) h.green = prev.green;                // T5.1: a learned green survives editing the numbers
+    if (prev?.greenShape) h.greenShape = prev.greenShape;  // and so do greens and hazards from the map (T6.1, T7.1)
+    if (prev?.hazards) h.hazards = prev.hazards;
     return h;
   });
   const par = holes.reduce((a, h) => a + h.par, 0);
@@ -102,7 +108,10 @@ export function validateCourseForm(f: CourseForm, original?: Course): { errors: 
   };
   if (f.city.trim()) course.city = f.city.trim();
   if (f.state.trim()) course.state = f.state.trim();
-  if (original?.sources) course.sources = original.sources;
+  const sources = f.sources ?? original?.sources;
+  if (sources) course.sources = sources;
+  const location = f.location ?? original?.location;
+  if (location) course.location = { lat: location.lat, lon: location.lon };
   return { errors: {}, course };
 }
 
@@ -136,10 +145,14 @@ function where(id: string, f: CourseForm): string {
   return 'Check';
 }
 
-export function CourseEditor({ course, draft, flags: scanFlags, notice, onCancel, onSaved }: {
+export function CourseEditor({ course, draft, flags: scanFlags, origin = 'scan', saveHint, notice, onCancel, onSaved }: {
   course?: Course; draft?: CourseForm;
-  /** From a scorecard scan: reasons keyed by control id. Each blocks Save until that control is edited. */
+  /** From a scorecard scan or course data: reasons keyed by control id. Each blocks Save until that control is edited. */
   flags?: Msgs;
+  /** Where a flagged draft came from: a photo of the card, or OpenGolfAPI's course data. */
+  origin?: 'scan' | 'data';
+  /** One line above Save (what saving also does). */
+  saveHint?: string;
   /** One plain line shown above the editor (why a scan did not fill it). */
   notice?: string;
   onCancel: () => void; onSaved: (c: Course) => void;
@@ -209,15 +222,19 @@ export function CourseEditor({ course, draft, flags: scanFlags, notice, onCancel
 
   return (
     <div id="course-editor">
-      <h1 class="h1">{course ? 'Edit course' : scanned ? 'Scanned course' : 'Add a course'}</h1>
+      <h1 class="h1">{course ? 'Edit course' : scanned ? (origin === 'data' ? 'Found course' : 'Scanned course') : 'Add a course'}</h1>
       {notice && <p class="note scan-notice" id="scan-notice" role="status">{notice}</p>}
       {scanned ? (
         <div class="scan-check" id="scan-check">
           <span class="badge warn">Check against the card</span>
-          <p>Read from your photo. Compare every number with the card before you save; nothing is saved until you tap Save course.</p>
+          {origin === 'data'
+            ? <p>From OpenGolfAPI's open course list. Ratings, slopes and yardages are often missing there: type those from
+                the card. Nothing is saved until you tap Save course.</p>
+            : <p>Read from your photo. Compare every number with the card before you save; nothing is saved until you tap Save course.</p>}
           <p id="scan-open"><b>{openFlags
             ? `${openFlags} ${openFlags === 1 ? 'value needs' : 'values need'} you: marked in red with the reason. Retype each from the card.`
             : 'Every flagged value has been retyped.'}</b></p>
+          {origin === 'data' && <p class="find-attr" id="found-attribution">Course data © OpenGolfAPI contributors</p>}
         </div>
       ) : (
         <p class="lede">Copy the numbers from the scorecard. Posted rounds keep the numbers they were played with.</p>
@@ -331,6 +348,7 @@ export function CourseEditor({ course, draft, flags: scanFlags, notice, onCancel
           onChange={(e) => set({ verified: (e.target as HTMLInputElement).checked })} />
         These numbers match the scorecard
       </label>
+      {saveHint && <p class="yd-small" id="save-hint" style="margin-top:8px">{saveHint}</p>}
       <div class="btn-row" style="margin-top:8px">
         <button class="btn btn-quiet" id="cancel-edit" onClick={onCancel}>Cancel</button>
         <button class="btn btn-primary" id="save-course" onClick={save}>Save course</button>

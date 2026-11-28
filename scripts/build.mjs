@@ -30,14 +30,17 @@ padding-block:16px}
 .gb-title{margin:0;font-size:1.5rem;color:var(--accent)}
 `;
 
-// The only addresses the app may contact (plan sections 15.1 and 15.3): the four OpenStreetMap Overpass servers,
-// tried in this order from a tap in the hosted copy, and the attribution link shown beside map-based yardage.
+// The only addresses the app may contact (plan sections 15.1, 15.3 and 16.2): the four OpenStreetMap Overpass servers,
+// tried in this order from a tap in the hosted copy (after its own same-origin /api/osm, which is a path, not an
+// address), the attribution link shown beside map-based yardage, and the OpenGolfAPI host for "Find a course" (its
+// paths are added at run time with `new URL`, so the bare host is the one form in the bundle).
 export const ALLOWED_URLS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
   'https://www.openstreetmap.org/copyright',
+  'https://api.opengolfapi.org',
 ];
 
 /** Every URL in a built file that is not allowed. The bundle writes "://" as ":\/\/" (see `bundle`), so both forms

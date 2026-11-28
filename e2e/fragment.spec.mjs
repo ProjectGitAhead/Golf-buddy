@@ -9,9 +9,12 @@ export default async function () {
     'starts with the title and viewport-fit meta');
   assert(!/<!doctype|<html[\s>]|<head[\s>]|<body[\s>]/i.test(html), 'no document tags');
   assert(!/https?:\/\//i.test(html), 'no URL text');
-  // T6.1: the only addresses the app can contact are the two OpenStreetMap Overpass servers and the attribution link.
+  // T6.1 / T7.2: the only addresses the app can contact are the four OpenStreetMap Overpass servers, the attribution
+  // link and the OpenGolfAPI host.
   eq(strayUrls(html).join(', '), '', 'addresses outside the allowed list');
   for (const u of ALLOWED_URLS) assert(html.includes(u.replace('://', ':\\/\\/')), `${u} is the one allowed form`);
+  assert(ALLOWED_URLS.filter((u) => u.includes('opengolfapi')).join() === 'https://api.opengolfapi.org', 'OpenGolfAPI: the host only');
+  assert(!/opengolfapi\.org\//.test(html.replaceAll(':\\/\\/', '://').replace(/https:\/\/api\.opengolfapi\.org(?![\w./-])/g, '')), 'no OpenGolfAPI path baked in');
   assert(strayUrls('fetch("https:\\/\\/example.com/x")').length === 1, 'the address check catches an escaped URL');
   assert((html.match(/<style>/g) ?? []).length === 1 && (html.match(/<script>/g) ?? []).length === 1, 'one style, one script');
   assert(Buffer.byteLength(html) < 1024 * 1024, 'under 1 MB');

@@ -43,6 +43,22 @@ Owner's three steps (once):
 - `npm run build` writes `dist/site/` (page, manifest, icons, `sw.js`) from `scripts/site/`. The `Dockerfile` serves
   it with nginx on port 8080 (`deploy/nginx.conf`); `fly.toml` holds the Fly settings (one small machine that stops
   when idle). Without the secret the workflow stops at its first step with a plain message.
+- Map lookup: the nginx config also serves `POST /api/osm`, which forwards the app's green and hazard query to the
+  four public OpenStreetMap Overpass servers in turn (fail-over on 406, 429, 5xx and time-outs), with a `User-Agent`
+  naming this app, a 16 KB body limit, about 6 requests a minute per phone (`Fly-Client-IP`), and good answers
+  cached on the machine's disk for a day (keyed by the query; the cache is lost when the machine is replaced). The
+  app asks `/api/osm` first and the public servers directly only if it fails; where it does not exist (GitHub Pages,
+  local preview) it answers 404 and the app goes straight to the public servers. The `Dockerfile` runs `nginx -t`, so
+  a bad config stops the deploy. `node scripts/check-nginx.mjs` runs `nginx -t` and a local fail-over, cache and
+  rate-limit test against stand-in servers when an `nginx` binary is installed (it cannot test TLS, DNS or the real
+  servers).
+- Find a course (hosted copy only): Courses > Find a course searches OpenGolfAPI (`api.opengolfapi.org`, no key,
+  1,000 requests a day per address; data under the ODbL, credited on screen) by name, or near you by asking for your
+  state's list (your position is not sent). A pick opens the course editor pre-filled; anything the data lacks
+  (often ratings, slopes and yardages) is flagged for you to type from the card, as with a scanned card. Saving it
+  loads its greens, bunkers and water from OpenStreetMap around the course's own coordinates (2,500 m) and stores
+  them on the course; a course's page can load them again later. The response shapes were built from OpenGolfAPI's
+  source and data schema, not checked against a live answer.
 - GitHub Pages is still available: turn on Pages (repo Settings > Pages > Source: GitHub Actions), then run the
   Pages workflow (`.github/workflows/pages.yml`) by hand from the Actions tab. It no longer runs on push.
 
