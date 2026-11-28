@@ -8,7 +8,7 @@ import { accuracyYards } from '../../core/geo';
 import { applyGreens, isHandSaved, matchGreens, yardage, type FoundGreen } from '../../core/greens';
 import type { Course } from '../../core/types';
 import { findCourse } from '../../data/courses';
-import { loadGolfFeatures, OSM_COPYRIGHT_URL } from '../../net/overpass';
+import { failureLine, loadGolfFeatures, OSM_COPYRIGHT_URL, OverpassError } from '../../net/overpass';
 import { useStore } from '../../store/use-store';
 import {
   onForYardage, permissionGranted, rememberYardage, turnOff, turnOn, useLocation, yardageRemembered, type Fix,
@@ -29,7 +29,7 @@ export function YardagePanel({ courseId, hole }: { courseId: string; hole: numbe
 type Load =
   | { s: 'idle' }
   | { s: 'loading' }
-  | { s: 'failed' }
+  | { s: 'failed'; line: string }
   | { s: 'unmapped' }
   | { s: 'found'; greens: Map<number, FoundGreen>; missing: number[]; mine: number[]; total: number }
   | { s: 'saved'; count: number };
@@ -165,15 +165,21 @@ function Loader({ course, fix, load, setLoad, pin }: { course: Course; fix: Fix;
   const store = useStore();
   const go = async () => {
     setLoad({ s: 'loading' });
+    let elements: Awaited<ReturnType<typeof loadGolfFeatures>>;
     try {
-      const elements = await loadGolfFeatures(fix.lat, fix.lon);
+      elements = await loadGolfFeatures(fix.lat, fix.lon);
+    } catch (e) {
+      setLoad({ s: 'failed', line: e instanceof OverpassError ? failureLine(e.attempts) : failureLine([]) });
+      return;
+    }
+    try {
       const numbers = course.holes.map((x) => x.number);
       const r = matchGreens(elements, fix, numbers);
       if (!r.greens.size) { setLoad({ s: 'unmapped' }); return; }
       const mine = course.holes.filter((x) => isHandSaved(x) && r.greens.has(x.number)).map((x) => x.number);
       setLoad({ s: 'found', greens: r.greens, missing: r.missing, mine, total: numbers.length });
     } catch {
-      setLoad({ s: 'failed' });
+      setLoad({ s: 'failed', line: failureLine([{ url: '', ms: 0, failure: { kind: 'unreadable' } }]) });
     }
   };
   const save = (replaceMine: boolean) => {
@@ -217,7 +223,7 @@ function Loader({ course, fix, load, setLoad, pin }: { course: Course; fix: Fix;
         {pin}
       </div>
       {load.s === 'failed'
-        ? <p class="yd-line yd-gap" id="yardage-load-failed" role="status">Couldn't load green positions. Check your signal and try again.</p>
+        ? <p class="yd-line yd-gap" id="yardage-load-failed" role="status">{load.line}</p>
         : load.s === 'saved'
           ? <p class="yd-small yd-ok" id="yardage-saved" role="status">Saved {load.count} green{load.count === 1 ? '' : 's'}.</p>
           : <p class="yd-small" id="yardage-privacy">Loading sends this course's rough location to OpenStreetMap. Nothing else leaves your phone.</p>}

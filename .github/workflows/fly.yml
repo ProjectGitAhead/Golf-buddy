@@ -50,6 +50,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - name: Bake in green positions from OpenStreetMap (never fails the job)
+        continue-on-error: true
+        run: node scripts/fetch-greens.mjs rancho-solano || true
       - run: npm run build
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - name: Create the app if it does not exist yet

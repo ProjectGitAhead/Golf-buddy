@@ -2,15 +2,17 @@
 // by Playwright, and the OpenStreetMap Overpass servers by routing (the hand-built fixture in src/core/greens.fixture.json
 // stands in for their answer). 390 px phone, light and dark. Expected yards are worked out here independently of the app.
 import { mkdirSync, readFileSync } from 'node:fs';
-import { assert, eq, noHorizontalScroll, startRound, text } from './lib.mjs';
+import { assert, eq, noHorizontalScroll, rancho, startRound, text } from './lib.mjs';
+import { bundle } from '../scripts/build.mjs';
+import { fetchGreens, loadLib } from '../scripts/fetch-greens.mjs';
 
 const KEY = 'golf-buddy:v1';
 const SHOTS = process.env.REVIEW_DIR
   || '/tmp/claude-0/-home-user/24fc6364-1d94-5479-9217-f29e60caeeeb/scratchpad/review/T6.1';
 const FIXTURE = readFileSync(new URL('../src/core/greens.fixture.json', import.meta.url), 'utf8');
 const ELEMENTS = JSON.parse(FIXTURE).elements;
-const MAIN = 'https://overpass-api.de/api/interpreter';
-const SPARE = 'https://overpass.kumi.systems/api/interpreter';
+const ENDPOINTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter', 'https://maps.mail.ru/osm/tools/overpass/api/interpreter'];
 const TEE1 = { latitude: 38.26, longitude: -122.03 };
 
 // ----- independent expectations ---------------------------------------------------------------------------------
@@ -82,7 +84,7 @@ async function phone(browser, baseURL, { dark = false, geo = TEE1, acc = 4, serv
     colorScheme: dark ? 'dark' : 'light', serviceWorkers, geolocation: { ...geo, accuracy: acc },
     permissions: granted ? ['geolocation'] : [] });
   await context.addInitScript(spies);
-  const calls = { main: 0, spare: 0, bodies: [], other: [] };
+  const calls = { main: 0, spare: 0, order: [], bodies: [], other: [] };
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
@@ -94,19 +96,22 @@ async function phone(browser, baseURL, { dark = false, geo = TEE1, acc = 4, serv
   return { page, context, errors, calls, url, origin };
 }
 
-/** Answers for the two servers: 'ok' (the fixture), 'empty' (nothing mapped), 'abort' (no connection) or a status. */
-async function servers(context, calls, main, spare = 'ok') {
-  const answer = (which, how) => async (route) => {
-    calls[which]++;
+/** Answers for the four servers, in order: 'ok' (the fixture), 'empty' (nothing mapped), 'abort' (no connection),
+ *  'timeout' (Overpass ran out of time: 200 with a runtime-error remark) or a status. `calls.main` counts the first
+ *  server, `calls.spare` the other three, `calls.order` the server numbers asked. */
+async function servers(context, calls, ...plan) {
+  const answer = (i, how) => async (route) => {
+    calls[i === 0 ? 'main' : 'spare']++;
+    calls.order.push(i + 1);
     calls.bodies.push(route.request().postData() ?? '');
     calls.other = calls.other.filter((u) => u !== route.request().url());
     if (how === 'abort') return route.abort('connectionfailed');
     const headers = { 'content-type': 'application/json', 'access-control-allow-origin': '*' };
     if (typeof how === 'number') return route.fulfill({ status: how, headers, body: 'busy' });
+    if (how === 'timeout') return route.fulfill({ status: 200, headers, body: '{"elements":[],"remark":"runtime error: Query timed out"}' });
     return route.fulfill({ status: 200, headers, body: how === 'empty' ? '{"elements":[]}' : FIXTURE });
   };
-  await context.route(MAIN, answer('main', main));
-  await context.route(SPARE, answer('spare', spare));
+  for (const [i, url] of ENDPOINTS.entries()) await context.route(url, answer(i, plan[i] ?? 'ok'));
 }
 
 const geoCount = (page) => page.evaluate(() => window.__geo);
@@ -266,31 +271,79 @@ async function stepperVisible(page, where) {
 }
 
 async function failover(browser, baseURL) {
-  // First server down: the second answers, each asked once.
+  // First two servers down: the third answers, and the fourth is never asked.
   let { page, context, errors, calls } = await phone(browser, baseURL);
   try {
-    await servers(context, calls, 'abort', 'ok');
+    await servers(context, calls, 'abort', 503, 'ok', 'ok');
     await startRound(page, {});
     await page.click('#yardage-on');
     await page.click('#yardage-load');
     await page.waitForSelector('#yardage-found');
-    eq(await text(page, '#yardage-found-line'), 'Found 18 of 18 greens', 'found via the second server');
-    eq(`${calls.main},${calls.spare}`, '1,1', 'one request to each server');
+    eq(await text(page, '#yardage-found-line'), 'Found 18 of 18 greens', 'found via the third server');
+    await page.waitForTimeout(300);
+    eq(calls.order.join(','), '1,2,3', 'servers asked in order, stopping at the first good answer');
     eq(errors.length, 0, `page errors: ${errors.join(' | ')}`);
   } finally { await context.close(); }
 
-  // Both down: one plain line, no more tries.
-  ({ page, context, errors, calls } = await phone(browser, baseURL));
+  // Every server down: one plain line naming the reason, each server asked once, no more tries.
+  const cases = [
+    [['abort', 'abort', 'abort', 'abort'], "Couldn't connect to the map service. Check that this phone is online and try again."],
+    [[429, 'abort', 504, 504], 'The map service is busy (status 429, 504). Try again in a minute.'],
+    [['timeout', 'abort', 'timeout', 'abort'], 'The map service took too long to answer. Try again in a minute.'],
+  ];
+  for (const [plan, line] of cases) {
+    ({ page, context, errors, calls } = await phone(browser, baseURL));
+    try {
+      await servers(context, calls, ...plan);
+      await startRound(page, {});
+      await page.click('#yardage-on');
+      await page.click('#yardage-load');
+      await page.waitForSelector('#yardage-load-failed');
+      eq(await text(page, '#yardage-load-failed'), line, `failed line for ${plan.join(' / ')}`);
+      await page.waitForTimeout(300);
+      eq(calls.order.join(','), '1,2,3,4', 'each server asked once, then it stops');
+      assert(await page.isVisible('#yardage-save-pin'), 'learn-as-you-play still offered');
+      eq(await text(page, '#yardage-load'), 'Try loading again', 'retry offered');
+      eq(errors.length, 0, `page errors: ${errors.join(' | ')}`);
+    } finally { await context.close(); }
+  }
+}
+
+async function bundledGreens(browser, baseURL) {
+  // A course that ships with greens baked in at build time (plan 15.3): after "Turn on live yardage" the numbers
+  // appear at once, with the attribution, and the phone makes no network call at all. The page is the hosted copy
+  // rebuilt with Rancho Solano's greens file exactly as scripts/fetch-greens.mjs writes it from the fixture (the
+  // course placed at the fixture's first tee).
+  const files = new Map();
+  await fetchGreens({
+    course: { ...rancho, location: { lat: TEE1.latitude, lon: TEE1.longitude } }, lib: await loadLib(), outFile: 'g.json',
+    fetchImpl: async () => new Response(FIXTURE), log: () => {},
+    io: { exists: (f) => files.has(f), read: (f) => files.get(f), write: (f, t) => files.set(f, t) },
+  });
+  const js = (await bundle({ greens: { 'rancho-solano': JSON.parse(files.get('g.json')) } })).trim();
+  const site = readFileSync(new URL('../dist/site/index.html', import.meta.url), 'utf8');
+  const at = site.indexOf('<script>', site.indexOf('<div id="golf-buddy"></div>'));
+  const end = site.indexOf('</script>', at);
+  const html = `${site.slice(0, at)}<script>${js}${site.slice(end)}`;
+  const { page, context, errors, calls } = await phone(browser, baseURL);
   try {
-    await servers(context, calls, 'abort', 504);
+    await servers(context, calls, 'ok');
+    await context.route(/\/Golf-buddy\/$/, (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: html }));
+    await page.goto(`${baseURL.replace('127.0.0.1', 'localhost')}/Golf-buddy/`);
+    await page.waitForSelector('.app');
     await startRound(page, {});
     await page.click('#yardage-on');
-    await page.click('#yardage-load');
-    await page.waitForSelector('#yardage-load-failed');
-    eq(await text(page, '#yardage-load-failed'), "Couldn't load green positions. Check your signal and try again.", 'failed line');
-    await page.waitForTimeout(500);
-    eq(`${calls.main},${calls.spare}`, '1,1', 'each server asked once, then it stops');
-    assert(await page.isVisible('#yardage-save-pin'), 'learn-as-you-play still offered');
+    await page.waitForSelector('#yardage[data-state="live"]');
+    eq(await page.locator('#yardage-load').count(), 0, 'no "Load green positions" step');
+    const want = expected(TEE1, fixtureGreen(1));
+    await near(page, '#yardage-centre', want.centre, 'bundled centre from the tee');
+    await near(page, '#yardage-front', want.front, 'bundled front from the tee');
+    await near(page, '#yardage-back', want.back, 'bundled back from the tee');
+    assert((await text(page, '#yardage-osm')).includes('Green positions © OpenStreetMap contributors'), 'attribution shown');
+    await page.click('#hole-next');
+    await page.waitForSelector('#hole-screen[data-hole="2"]');
+    await near(page, '#yardage-centre', expected(TEE1, fixtureGreen(2)).centre, 'bundled hole 2 centre');
+    eq(calls.main + calls.spare + calls.other.length, 0, `no network call (${calls.other.join(' ')})`);
     eq(errors.length, 0, `page errors: ${errors.join(' | ')}`);
   } finally { await context.close(); }
 }
@@ -400,6 +453,7 @@ export default async function ({ browser, baseURL }) {
   await live(browser, baseURL, false);
   await live(browser, baseURL, true);
   await failover(browser, baseURL);
+  await bundledGreens(browser, baseURL);
   await unmapped(browser, baseURL);
   await handSavedKept(browser, baseURL);
   await laterVisitNotGranted(browser, baseURL);

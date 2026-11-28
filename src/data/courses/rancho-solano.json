@@ -3,6 +3,10 @@
   "name": "Rancho Solano Golf Course",
   "city": "Fairfield",
   "state": "CA",
+  "location": {
+    "lat": 38.288,
+    "lon": -122.078
+  },
   "holes": [
     {
       "number": 1,
